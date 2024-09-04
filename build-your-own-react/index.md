@@ -147,3 +147,385 @@ container.appendChild(node)// 新增
 ```
 
 现在我们拥有与以前相同的应用程序，但没有使用 React。
+
+## 步骤 1：`createElement` 函数
+
+让我们从另一个应用程序开始（另一个结构的 JSX）。这一次，我们将用我们自己的 React 版本替换 React 代码。
+
+```js
+const element = (
+  <div id="foo">
+    <a>bar</a>
+    <b />
+  </div>
+)
+const container = document.getElementById('root')
+ReactDOM.render(element, container)
+```
+
+我们将从编写自己的 `createElement` 开始。
+
+让我们将 JSX 转换为 JS，以便我们可以看到 `createElement` 调用。
+
+正如我们在上一步中看到的，元素是具有 `type` 和 `props` 的对象。我们的函数唯一需要做的就是创建该对象。
+
+```js
+const element = React.createElement(
+  'div',
+  { id: 'foo' },
+  React.createElement('a', null, 'bar'),
+  React.createElement('b')
+)
+
+// 省略之前到代码
+```
+
+我们对 `props` 使用 展开运算符，对 `children` 使用 rest 参数语法，这样 `children` prop 将始终是一个数组。
+
+```js
+function createElement(type, props, ...children) {
+  return {
+    type,
+    props: {
+      ...props,
+      children
+    }
+  }
+}
+```
+
+例如，`createElement（"div"）` 返回：
+
+```js
+{
+  "type": "div",
+  "props": { "children": [] }
+}
+```
+
+`createElement("div", null, a)` 返回:
+
+```js
+{
+  "type": "div",
+  "props": { "children": [a] }
+}
+```
+
+`createElement("div", null, a, b)` 返回:
+
+```js
+{
+  "type": "div",
+  "props": { "children": [a, b] }
+}
+```
+
+`children` 数组还可以包含原始值，如字符串或数字。因此，我们将所有不是对象的东西包装在它自己的元素中，并为它们创建一个特殊类型：TEXT_ELEMENT。
+
+```js
+function createElement(type, props, ...children) {
+  return {
+    type,
+    props: {
+      ...props,
+      children: children.map(child => // 新增判断
+        typeof child === "object"
+          ? child
+          : createTextElement(child)
+      ),
+    },
+  }
+}
+​
+function createTextElement(text) {// 新增函数
+  return {
+    type: "TEXT_ELEMENT",
+    props: {
+      nodeValue: text,
+      children: [],
+    },
+  }
+}
+​
+// 省略之前的代码
+```
+
+React 不会在没有`子项`时包装原始值或创建空数组，但我们这样做是因为它会简化我们的代码，对于我们的库，我们更喜欢简单的代码而不是高性能代码。
+
+我们仍在使用 React 的 `createElement`。
+
+```js
+// 省略之前的代码
+
+const element = React.createElement(
+  'div',
+  { id: 'foo' },
+  React.createElement('a', null, 'bar'),
+  React.createElement('b')
+)
+```
+
+为了替换它，让我们为我们的库命名。我们需要一个听起来像 React 但又暗示其教学目的的名字。
+
+我们将其称为 Didact。
+
+```js
+// 省略之前的代码
+
+const Didact = {
+  createElement,
+}
+​
+const element = Didact.createElement(
+  "div",
+  { id: "foo" },
+  Didact.createElement("a", null, "bar"),
+  Didact.createElement("b")
+)
+
+// 省略之前的代码
+```
+
+但我们仍然希望在这里使用 JSX。我们如何告诉 babel 使用 Didact 的 createElement 而不是 React 的？
+
+如果我们有这样的注释，当 babel 转译 JSX 时，它将使用我们定义的函数。
+
+```js
+// 省略之前的代码
+
+/** @jsx Didact.createElement */
+const element = (
+  <div id="foo">
+    <a>bar</a>
+    <b />
+  </div>
+)
+
+// 省略之前的代码
+```
+
+步骤 1 完整代码
+
+```js
+const Didact = {
+  createElement,
+}
+​
+const element = Didact.createElement(
+  "div",
+  { id: "foo" },
+  Didact.createElement("a", null, "bar"),
+  Didact.createElement("b")
+)
+
+function createElement(type, props, ...children) {
+  return {
+    type,
+    props: {
+      ...props,
+      children: children.map(child => // 新增判断
+        typeof child === "object"
+          ? child
+          : createTextElement(child)
+      ),
+    },
+  }
+}
+​
+function createTextElement(text) {// 新增函数
+  return {
+    type: "TEXT_ELEMENT",
+    props: {
+      nodeValue: text,
+      children: [],
+    },
+  }
+}
+​
+const container = document.getElementById('root')
+
+console.log(element)
+
+// 省略render
+```
+
+## 步骤 2：`render` 函数
+
+接下来，我们需要编写我们版本的 `ReactDOM.render` 函数。
+
+```js
+// 省略之前的代码
+
+ReactDOM.render(element, container)
+```
+
+目前，我们只关心向 DOM 添加内容。我们稍后会处理更新和删除。
+
+```js
+// 省略之前的代码
+
+function render(element, container) {
+  // TODO create dom nodes
+}
+​
+const Didact = {
+  createElement,
+  render,
+}
+
+// 省略之前的代码
+
+Didact.render(element, container)
+```
+
+我们首先使用 element 类型创建 DOM 节点，然后将新节点附加到容器中。
+
+```js
+// 省略之前的代码
+
+function render(element, container) {
+  const dom = document.createElement(element.type)
+​
+  container.appendChild(dom)
+}
+
+// 省略之前的代码
+```
+
+我们递归地为每个孩子做同样的事情。
+
+```js
+// 省略之前的代码
+
+function render(element, container) {
+  const dom = document.createElement(element.type)
+​
+  element.props.children.forEach(child =>
+    render(child, dom)
+  )
+​
+  container.appendChild(dom)
+}
+
+// 省略之前的代码
+```
+
+我们还需要处理文本元素，如果元素类型为 `TEXT_ELEMENT` 我们创建一个文本节点而不是常规节点。
+
+```js
+// 省略之前的代码
+
+function render(element, container) {
+
+  // 新增
+  const dom =
+    element.type == "TEXT_ELEMENT"
+      ? document.createTextNode("")
+      : document.createElement(element.type)
+​
+  element.props.children.forEach(child =>
+    render(child, dom)
+  )
+​
+  container.appendChild(dom)
+}
+
+// 省略之前的代码
+```
+
+我们在这里需要做的最后一件事是将 element props 分配给节点。
+
+```js
+// 省略之前的代码
+
+function render(element, container) {
+  const dom =
+    element.type == "TEXT_ELEMENT"
+      ? document.createTextNode("")
+      : document.createElement(element.type)
+​
+// 新增
+  const isProperty = key => key !== "children"
+  Object.keys(element.props)
+    .filter(isProperty)
+    .forEach(name => {
+      dom[name] = element.props[name]
+    })
+​
+  element.props.children.forEach(child =>
+    render(child, dom)
+  )
+​
+  container.appendChild(dom)
+}
+
+// 省略之前的代码
+```
+
+就是这样。我们现在有一个可以将 JSX 渲染到 DOM 的库。
+
+在 [codesandbox](https://codesandbox.io/s/didact-2-k6rbj) 上试一试。
+
+步骤 2 完整代码
+
+```js
+function createElement(type, props, ...children) {
+  return {
+    type,
+    props: {
+      ...props,
+      children: children.map(child =>
+        typeof child === "object"
+          ? child
+          : createTextElement(child)
+      ),
+    },
+  }
+}
+​
+function createTextElement(text) {
+  return {
+    type: "TEXT_ELEMENT",
+    props: {
+      nodeValue: text,
+      children: [],
+    },
+  }
+}
+​
+function render(element, container) {
+  const dom =
+    element.type == "TEXT_ELEMENT"
+      ? document.createTextNode("")
+      : document.createElement(element.type)
+​
+  const isProperty = key => key !== "children"
+  Object.keys(element.props)
+    .filter(isProperty)
+    .forEach(name => {
+      dom[name] = element.props[name]
+    })
+​
+  element.props.children.forEach(child =>
+    render(child, dom)
+  )
+​
+  container.appendChild(dom)
+}
+​
+const Didact = {
+  createElement,
+  render,
+}
+​
+/** @jsx Didact.createElement */
+const element = (
+  <div id="foo">
+    <a>bar</a>
+    <b />
+  </div>
+)
+const container = document.getElementById("root")
+Didact.render(element, container)
+```
