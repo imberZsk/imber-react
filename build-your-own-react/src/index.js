@@ -35,6 +35,21 @@ function render(element, container) {
   container.appendChild(dom)
 }
 
+function workLoop(deadline) {
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
+    shouldYield = deadline.timeRemaining() < 1
+  }
+  requestIdleCallback(workLoop)
+}
+
+requestIdleCallback(workLoop)
+
+function performUnitOfWork(nextUnitOfWork) {
+  // TODO
+}
+
 const Didact = {
   createElement,
   render
@@ -47,5 +62,6 @@ const element = (
     <h2 style="text-align:right">from Didact</h2>
   </div>
 )
+
 const container = document.getElementById('root')
 Didact.render(element, container)

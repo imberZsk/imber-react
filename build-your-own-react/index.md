@@ -2,9 +2,9 @@
 
 我们将从头开始重写 React。一步一步。遵循真实 React 代码的架构，但没有所有优化和非必要的功能。
 
-如果你读过我之前的任何一篇 [“构建你自己的 React”](https://engineering.hexacta.com/didact-learning-how-react-works-by-building-it-from-scratch-51007984e5c5) 的文章，不同的是这篇文章是基于 React 16.8 的，所以我们现在可以使用 hooks 并删除所有与 class 相关的代码。
+<!-- 如果你读过我之前的任何一篇 [“构建你自己的 React”](https://engineering.hexacta.com/didact-learning-how-react-works-by-building-it-from-scratch-51007984e5c5) 的文章，不同的是这篇文章是基于 React 16.8 的，所以我们现在可以使用 hooks 并删除所有与 class 相关的代码。
 
-你可以在 [Didact](https://github.com/pomber/didact) 存储库上找到包含旧博客文章和代码的历史记录。还有一个讲座涵盖了相同的内容。但这是一个独立的帖子。
+你可以在 [Didact](https://github.com/pomber/didact) 存储库上找到包含旧博客文章和代码的历史记录。还有一个讲座涵盖了相同的内容。但这是一个独立的帖子。 -->
 
 从头开始，这些是我们将逐一添加到 React 版本中的所有内容：
 
@@ -527,5 +527,183 @@ const element = (
   </div>
 )
 const container = document.getElementById("root")
+Didact.render(element, container)
+```
+
+## 步骤 3：Concurrent Mode 并发模式
+
+但。。。在我们开始添加更多代码之前，我们需要一个重构。
+
+这个递归调用有问题。
+
+```js
+// 省略之前的代码
+
+function render(element, container) {
+  // 有问题
+  element.props.children.forEach((child) => render(child, dom))
+}
+
+// 省略之前的代码
+```
+
+一旦我们开始渲染，我们不会停止，直到我们渲染了完整的元素树。如果元素树很大，则可能会阻塞主线程太久。如果浏览器需要执行高优先级操作，例如处理用户输入或保持动画流畅，则必须等到渲染完成。
+
+因此，我们将工作分解为小单元，完成每个单元后，如果有其他需要完成的事情，我们将让浏览器中断渲染。
+
+```js
+// 省略之前的代码
+
+let nextUnitOfWork = null
+
+function workLoop(deadline) {
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
+    shouldYield = deadline.timeRemaining() < 1
+  }
+  requestIdleCallback(workLoop)
+}
+
+requestIdleCallback(workLoop)
+
+function performUnitOfWork(nextUnitOfWork) {
+  // TODO
+}
+
+// 省略之前的代码
+```
+
+我们使用 `requestIdleCallback` 来构建一个循环。你可以将 `requestIdleCallback` 看作是一个 `setTimeout`，但浏览器会在主线程空闲时运行回调，而不是我们告诉它何时运行。
+
+```js
+// 省略之前的代码
+function workLoop(deadline) {
+  requestIdleCallback(workLoop)
+}
+
+requestIdleCallback(workLoop)
+// 省略之前的代码
+```
+
+React 不再使用 `requestIdleCallback`。现在它使用 scheduler 包。但对于这个用例，它在概念上是相同的。
+
+`requestIdleCallback` 还为我们提供了一个 deadline 参数。我们可以使用它来检查浏览器需要再次控制之前我们还有多少时间。
+
+```js
+// 省略之前的代码
+
+function workLoop(deadline) {
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    // 省略之前的代码
+  }
+  requestIdleCallback(workLoop)
+}
+
+// 省略之前的代码
+```
+
+截至 2019 年 11 月，Concurrent 模式在 React 中还不稳定。循环的稳定版本看起来更像这样：
+
+```js
+while (nextUnitOfWork) {
+  nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
+}
+```
+
+要开始使用循环，我们需要设置第一个工作单元，然后编写一个 `performUnitOfWork` 函数，该函数不仅执行工作，还返回下一个工作单元。
+
+```js
+// 省略之前的代码
+
+let nextUnitOfWork = null
+​
+function workLoop(deadline) {
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(
+      nextUnitOfWork
+    )
+    shouldYield = deadline.timeRemaining() < 1
+  }
+}
+​
+function performUnitOfWork(nextUnitOfWork) {
+  // TODO
+}
+
+// 省略之前的代码
+```
+
+步骤 2 完整代码
+
+```js
+function createElement(type, props, ...children) {
+  return {
+    type,
+    props: {
+      ...props,
+      children: children.map((child) =>
+        typeof child === 'object' ? child : createTextElement(child)
+      )
+    }
+  }
+}
+
+function createTextElement(text) {
+  return {
+    type: 'TEXT_ELEMENT',
+    props: {
+      nodeValue: text,
+      children: []
+    }
+  }
+}
+
+function render(element, container) {
+  const dom =
+    element.type == 'TEXT_ELEMENT'
+      ? document.createTextNode('')
+      : document.createElement(element.type)
+  const isProperty = (key) => key !== 'children'
+  Object.keys(element.props)
+    .filter(isProperty)
+    .forEach((name) => {
+      dom[name] = element.props[name]
+    })
+  element.props.children.forEach((child) => render(child, dom)) // 这里的写法有问题，应该靠workloop来完成，后面章节会修改
+  container.appendChild(dom)
+}
+
+function workLoop(deadline) {
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
+    shouldYield = deadline.timeRemaining() < 1
+  }
+  requestIdleCallback(workLoop)
+}
+
+requestIdleCallback(workLoop)
+
+function performUnitOfWork(nextUnitOfWork) {
+  // TODO
+}
+
+const Didact = {
+  createElement,
+  render
+}
+
+/** @jsx Didact.createElement */
+const element = (
+  <div style="background: salmon">
+    <h1>Hello World</h1>
+    <h2 style="text-align:right">from Didact</h2>
+  </div>
+)
+
+const container = document.getElementById('root')
 Didact.render(element, container)
 ```
