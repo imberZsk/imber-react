@@ -1,3 +1,9 @@
+## 思考
+
+React 更新的流程？
+React 如何实现可打断更新的？又是怎么恢复执行的？React 的并发更新 Concurrent Mode？
+React Fiber 架构？
+
 ## Build your own React
 
 我们将从头开始重写 React。一步一步。遵循真实 React 代码的架构，但没有所有优化和非必要的功能。
@@ -558,8 +564,12 @@ let nextUnitOfWork = null
 
 function workLoop(deadline) {
   let shouldYield = false
+
+  // 如果有下一个单元 并且 可以继续工作
   while (nextUnitOfWork && !shouldYield) {
     nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
+
+    // 时间大于1的时候可以继续工作
     shouldYield = deadline.timeRemaining() < 1
   }
   requestIdleCallback(workLoop)
@@ -636,7 +646,7 @@ function performUnitOfWork(nextUnitOfWork) {
 // 省略之前的代码
 ```
 
-步骤 2 完整代码
+步骤 3 完整代码
 
 ```js
 function createElement(type, props, ...children) {
@@ -676,6 +686,8 @@ function render(element, container) {
   container.appendChild(dom)
 }
 
+let nextUnitOfWork = null
+
 function workLoop(deadline) {
   let shouldYield = false
   while (nextUnitOfWork && !shouldYield) {
@@ -691,6 +703,445 @@ function performUnitOfWork(nextUnitOfWork) {
   // TODO
 }
 
+const Didact = {
+  createElement,
+  render
+}
+
+/** @jsx Didact.createElement */
+const element = (
+  <div style="background: salmon">
+    <h1>Hello World</h1>
+    <h2 style="text-align:right">from Didact</h2>
+  </div>
+)
+
+const container = document.getElementById('root')
+Didact.render(element, container)
+```
+
+## 步骤 4：Fibers
+
+要组织工作单元，我们需要一个数据结构：fiber 树。
+
+![alt text](https://pomb.us/static/a88a3ec01855349c14302f6da28e2b0c/d3fa7/fiber1.png)
+
+让我给你看一个例子。
+
+假设我们想要渲染一个像这样的元素树：
+
+```js
+Didact.render(
+  <div>
+    <h1>
+      <p />
+      <a />
+    </h1>
+    <h2 />
+  </div>,
+  container
+)
+```
+
+在`渲染`中，我们将创建根 fiber 并将其设置为 `nextUnitOfWork`。其余工作将在 `performUnitOfWork` 函数上进行，我们将为每个 fiber 执行三项操作：
+
+1. 将元素添加到 DOM
+2. 为元素的 children 创建 fiber
+3. 选择下一个工作单元
+
+此数据结构的目标之一是使查找下一个工作单元变得容易。这就是为什么每个纤程都有一个指向其第一个子项、下一个兄弟级和父级的链接。
+
+当我们完成对 fiber 执行工作时，如果它有一个子项(child)，则该 fiber 将是下一个工作单元。
+
+从我们的示例中，当我们完成 div fiber 的工作时，下一个工作单元将是 h1 fiber。
+
+如果 fiber 没有`子节点`(child)，我们将`同级`(sibling)节点用作下一个工作单元。
+
+例如，`p` fiber 没有 `child`，因此我们在完成 p fiber 后移动到 a fiber。
+
+如果 fiber 没有孩子也没有兄弟姐妹，我们就去找 “叔叔”：父母的兄弟姐妹。就像示例中的 a 和 h2 fiber。
+
+此外，如果父级没有兄弟姐妹，我们会继续向上浏览父级，直到找到有兄弟姐妹的父级 或直到我们到达根 root。如果我们到达了根，则意味着我们已经完成了此`渲染`的所有工作。
+
+现在让我们将其放入代码中。
+
+首先，让我们从 `render` 函数中删除此代码。
+
+```js
+// 省略之前的代码
+
+function render(element, container) {
+  // 这里的内容即将删掉
+  const dom =
+    element.type == "TEXT_ELEMENT"
+      ? document.createTextNode("")
+      : document.createElement(element.type)
+​
+  const isProperty = key => key !== "children"
+  Object.keys(element.props)
+    .filter(isProperty)
+    .forEach(name => {
+      dom[name] = element.props[name]
+    })
+​
+  element.props.children.forEach(child =>
+    render(child, dom)
+  )
+​
+  container.appendChild(dom)
+}
+​
+let nextUnitOfWork = null
+
+// 省略之前的代码
+```
+
+我们将创建 DOM 节点的部分保留在它自己的函数中，我们稍后会使用它。
+
+```js
+// 省略之前的代码
+
+function createDom(fiber) {
+  const dom =
+    fiber.type == "TEXT_ELEMENT"
+      ? document.createTextNode("")
+      : document.createElement(fiber.type)
+​
+  const isProperty = key => key !== "children"
+  Object.keys(fiber.props)
+    .filter(isProperty)
+    .forEach(name => {
+      dom[name] = fiber.props[name]
+    })
+​
+  return dom
+}
+​
+function render(element, container) {
+  // TODO set next unit of work
+}
+​
+let nextUnitOfWork = null
+
+// 省略之前的代码
+```
+
+在 `render` 函数中，我们将 `nextUnitOfWork` 设置为 fiber 树的根。
+
+```js
+// 省略之前的代码
+
+function render(element, container) {
+  nextUnitOfWork = {
+    dom: container,
+    props: {
+      children: [element],
+    },
+  }
+}
+​
+let nextUnitOfWork = null
+
+// 省略之前的代码
+```
+
+然后，当浏览器准备好时，它将调用我们的 `workLoop`，我们将开始在根目录下工作。
+
+```js
+function workLoop(deadline) {
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(
+      nextUnitOfWork
+    )
+    shouldYield = deadline.timeRemaining() < 1
+  }
+  requestIdleCallback(workLoop)
+}
+​
+requestIdleCallback(workLoop)
+​
+function performUnitOfWork(fiber) {
+  // TODO add dom node
+  // TODO create new fibers
+  // TODO return next unit of work
+}
+```
+
+首先，我们创建一个新节点并将其附加到 DOM。
+
+我们在 fiber.dom 属性中跟踪 DOM 节点。
+
+```js
+function performUnitOfWork(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber)
+  }
+​
+  if (fiber.parent) {
+    fiber.parent.dom.appendChild(fiber.dom)
+  }
+​
+  // TODO create new fibers
+  // TODO return next unit of work
+}
+```
+
+然后，我们为每个孩子创建一个新的 fiber。
+
+```js
+// 省略之前的代码
+
+function performUnitOfWork(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber)
+  }
+​
+  if (fiber.parent) {
+    fiber.parent.dom.appendChild(fiber.dom)
+  }
+​
+  const elements = fiber.props.children
+  let index = 0
+  let prevSibling = null
+​
+  while (index < elements.length) {
+    const element = elements[index]
+​
+    const newFiber = {
+      type: element.type,
+      props: element.props,
+      parent: fiber,
+      dom: null,
+    }
+  }
+​
+  // TODO return next unit of work
+}
+
+// 省略之前的代码
+```
+
+然后我们将其添加到 fiber 树中，将其设置为子项或同级项，具体取决于它是否是第一个子项。
+
+```js
+// 省略之前的代码
+
+function performUnitOfWork(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber)
+  }
+​
+  if (fiber.parent) {
+    fiber.parent.dom.appendChild(fiber.dom)
+  }
+​
+  const elements = fiber.props.children
+  let index = 0
+  let prevSibling = null
+​
+  while (index < elements.length) {
+    const element = elements[index]
+​
+    const newFiber = {
+      type: element.type,
+      props: element.props,
+      parent: fiber,
+      dom: null,
+    }
+
+    if (index === 0) {
+      fiber.child = newFiber
+    } else {
+      prevSibling.sibling = newFiber
+    }
+​
+    prevSibling = newFiber
+    index++
+  }
+​
+  // TODO return next unit of work
+}
+
+// 省略之前的代码
+```
+
+最后，我们搜索下一个工作单元。我们首先尝试与 child 一起尝试，然后与兄弟姐妹一起尝试，然后与叔叔一起尝试，依此类推。
+
+```js
+// 省略之前的代码
+
+function performUnitOfWork(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber)
+  }
+​
+  if (fiber.parent) {
+    fiber.parent.dom.appendChild(fiber.dom)
+  }
+​
+  const elements = fiber.props.children
+  let index = 0
+  let prevSibling = null
+​
+  while (index < elements.length) {
+    const element = elements[index]
+​
+    const newFiber = {
+      type: element.type,
+      props: element.props,
+      parent: fiber,
+      dom: null,
+    }
+
+    if (index === 0) {
+      fiber.child = newFiber
+    } else {
+      prevSibling.sibling = newFiber
+    }
+​
+    prevSibling = newFiber
+    index++
+  }
+
+ if (fiber.child) {
+    return fiber.child
+  }
+  let nextFiber = fiber
+  while (nextFiber) {
+    if (nextFiber.sibling) {
+      return nextFiber.sibling
+    }
+    nextFiber = nextFiber.parent
+  }
+​
+}
+
+// 省略之前的代码
+```
+
+这就是我们的 performUnitOfWork。
+
+步骤 4 完整代码
+
+```js
+// JSX转对象
+function createElement(type, props, ...children) {
+  return {
+    type,
+    props: {
+      ...props,
+      children: children.map((child) =>
+        typeof child === 'object' ? child : createTextElement(child)
+      )
+    }
+  }
+}
+
+// JSX转对象时处理文本节点
+function createTextElement(text) {
+  return {
+    type: 'TEXT_ELEMENT',
+    props: {
+      nodeValue: text,
+      children: []
+    }
+  }
+}
+
+// 单独的创建dom的函数，但是没有container挂载
+function createDom(fiber) {
+  const dom =
+    fiber.type == 'TEXT_ELEMENT'
+      ? document.createTextNode('')
+      : document.createElement(fiber.type)
+  const isProperty = (key) => key !== 'children'
+  Object.keys(fiber.props)
+    .filter(isProperty)
+    .forEach((name) => {
+      dom[name] = fiber.props[name]
+    })
+  return dom
+}
+
+// ReactDOM.render 把JSX转换后到对象变成dom,并渲染到页面
+// element就是fiber树，相当于传了fiber树进去当第一个工作单元
+function render(element, container) {
+  nextUnitOfWork = {
+    dom: container,
+    props: {
+      children: [element]
+    }
+  }
+}
+
+// 下一个工作单元
+let nextUnitOfWork = null
+
+// 并发更新
+function workLoop(deadline) {
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
+    shouldYield = deadline.timeRemaining() < 1
+  }
+  requestIdleCallback(workLoop)
+}
+
+requestIdleCallback(workLoop)
+
+// 执行工作单元
+// 1. 创建dom
+// 2. 创建子节点 fiber树 或者说创建新的fiber
+// 3. 返回下一个工作单元
+function performUnitOfWork(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber)
+  }
+
+  if (fiber.parent) {
+    fiber.parent.dom.appendChild(fiber.dom)
+  }
+
+  // 只有当前级处理，但由于在workLoop里是递归，所以在递归时候会处理完所有子级 fiber
+  const elements = fiber.props.children
+  let index = 0
+  let prevSibling = null
+
+  // 从根开始生成fiber
+  while (index < elements.length) {
+    const element = elements[index]
+
+    const newFiber = {
+      type: element.type,
+      props: element.props,
+      parent: fiber,
+      dom: null
+    }
+
+    if (index === 0) {
+      fiber.child = newFiber
+    } else {
+      prevSibling.sibling = newFiber
+    }
+
+    prevSibling = newFiber
+    index++
+  }
+
+  if (fiber.child) {
+    return fiber.child
+  }
+  let nextFiber = fiber
+  while (nextFiber) {
+    if (nextFiber.sibling) {
+      return nextFiber.sibling
+    }
+    nextFiber = nextFiber.parent
+  }
+}
+
+// 自己定义的 React 对象
 const Didact = {
   createElement,
   render
