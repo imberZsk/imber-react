@@ -46,6 +46,27 @@ const render = (element, container) => {
   container.appendChild(dom)
 }
 
+let nextUnitOfWork = null
+
+function workLook(deadline) {
+  debugger
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
+    // 如果剩余时间少于 1 毫秒，则 shouldYield 被设置为 true，表示当前任务应该让出执行权。
+    shouldYield = deadline.timeRemaining() < 1
+  }
+  requestIdleCallback(nextUnitOfWork)
+}
+
+requestIdleCallback(workLook)
+
+function performUnitOfWork(nextUnitOfWork) {
+  // TODO 创建DOM
+  // 给children创建fiber
+  // 找到下一个工作单元
+}
+
 const MyReact = {
   createElement,
   render
