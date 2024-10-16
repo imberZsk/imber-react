@@ -24,7 +24,7 @@ const createTextElement = (text) => {
 const createDom = (fiber) => {
   // 创建对应节点
   const dom =
-    element.type === 'TEXT_ELEMENT'
+    fiber.type === 'TEXT_ELEMENT'
       ? document.createTextNode('')
       : document.createElement(fiber.type)
 
@@ -34,7 +34,7 @@ const createDom = (fiber) => {
   }
 
   // 赋给props
-  Object.keys(element.props)
+  Object.keys(fiber.props)
     .filter(isProperty)
     .forEach((name) => {
       dom[name] = fiber.props[name]
@@ -55,14 +55,13 @@ const render = (element, container) => {
 let nextUnitOfWork = null
 
 function workLoop(deadline) {
-  debugger
   let shouldYield = false
   while (nextUnitOfWork && !shouldYield) {
     nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
     // 如果剩余时间少于 1 毫秒，则 shouldYield 被设置为 true，表示当前任务应该让出执行权。
     shouldYield = deadline.timeRemaining() < 1
   }
-  requestIdleCallback(nextUnitOfWork)
+  requestIdleCallback(workLoop)
 }
 
 requestIdleCallback(workLoop)
@@ -93,7 +92,7 @@ function performUnitOfWork(fiber) {
   let index = 0
   let prevSibling = null
 
-  while (index < elements) {
+  while (index < elements.length) {
     const element = elements[index]
 
     const newFiber = {
@@ -114,7 +113,6 @@ function performUnitOfWork(fiber) {
   }
 
   // 3、找到下一个工作单元
-  let next = null
 
   // 向下递，向上归
   if (fiber.child) {
@@ -139,9 +137,9 @@ const MyReact = {
 // const element = <h1 title="foo">Hello</h1>
 
 const element = (
-  <div id="foo">
-    <a>bar</a>
-    <br />
+  <div style="background: salmon">
+    <h1>Hello World</h1>
+    <h2 style="text-align:right">from MyReact</h2>
   </div>
 )
 

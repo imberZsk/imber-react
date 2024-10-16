@@ -48,7 +48,7 @@ const render = (element, container) => {
 
 let nextUnitOfWork = null
 
-function workLook(deadline) {
+function workLoop(deadline) {
   debugger
   let shouldYield = false
   while (nextUnitOfWork && !shouldYield) {
@@ -59,7 +59,7 @@ function workLook(deadline) {
   requestIdleCallback(nextUnitOfWork)
 }
 
-requestIdleCallback(workLook)
+requestIdleCallback(workLoop)
 
 function performUnitOfWork(nextUnitOfWork) {
   // TODO 创建DOM
