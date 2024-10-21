@@ -1,3 +1,10 @@
+/**
+ * jsx通过babel转成React.createElement()，返回 element 对象
+ * element 主要属性有type和props
+ * 根据type创建dom节点，props赋给属性
+ * props有个特殊的属性 children,可以是文本节点，也可以是一个element
+ */
+
 // import React from 'react'
 // import ReactDOM from 'react-dom'
 // const element = <h1 title="foo">Hello</h1>
@@ -8,7 +15,6 @@
 
 // ReactDOM把虚拟fiber渲染渲染成web使用规范
 
-// jsx通过babel转成React.createElement()，返回element对象，主要属性有type和props，根据type创建节点，props赋给属性，children是特殊的props,可以是textNode，也可以是一个element，如何render到页面
 const element = {
   type: 'h1',
   props: {

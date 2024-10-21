@@ -1,3 +1,8 @@
+/**
+ * createElement就是把jsx生成一个element对象
+ * 生成的对象结构是{type:'',props:{children:[]}}
+ * 需要区分文本节点
+ */
 import React from 'react'
 import ReactDOM from 'react-dom'
 

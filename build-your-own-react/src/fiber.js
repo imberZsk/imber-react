@@ -1,3 +1,7 @@
+/**
+ * 在performUnitOfWork中，主要做了三件事，创建dom，给children创建fiber，找到下一个执行单元
+ * 构建fiber树
+ */
 const createElement = (type, props, ...children) => {
   return {
     type,

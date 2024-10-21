@@ -1158,3 +1158,92 @@ const element = (
 const container = document.getElementById('root')
 Didact.render(element, container)
 ```
+
+## 步骤 5：Render 和 Commit 阶段
+
+我们这里有另一个问题。
+
+```js
+function performUnitOfWork(fiber) {
+  if (fiber.parent) {
+    fiber.parent.dom.appendChild(fiber.dom)
+  }
+}
+```
+
+每次处理元素时，我们都会向 DOM 添加新节点。而且，请记住，浏览器可能会在我们完成渲染整个树之前中断我们的工作。在这种情况下，用户将看到不完整的 UI。我们不希望那样。
+
+所以我们需要从这里删除改变 DOM 的部分。
+
+```js
+// 删除
+if (fiber.parent) {
+  fiber.parent.dom.appendChild(fiber.dom)
+}
+```
+
+相反，我们将跟踪纤维树的根。我们将其称为 work in progress root 或 wipRoot。
+
+```js
+function render(element, container) {
+  wipRoot = {
+    dom: container,
+    props: {
+      children: [element]
+    }
+  }
+  nextUnitOfWork = wipRoot
+}
+
+let wipRoot = null
+```
+
+一旦我们完成了所有工作（我们知道这一点，因为没有下一个工作单元），我们将整个纤维树提交到 DOM。
+
+```js
+function commitRoot() {
+  // TODO add nodes to dom
+}
+
+function workLoop(deadline) {
+  let shouldYield = false
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(
+      nextUnitOfWork
+    )
+    shouldYield = deadline.timeRemaining() < 1
+  }
+​
+   // 新增
+  if (!nextUnitOfWork && wipRoot) {
+    commitRoot()
+  }
+​
+  requestIdleCallback(workLoop)
+}
+```
+
+我们在 `commitRoot` 函数中执行此操作。在这里，我们递归地将所有节点附加到 dom 中。
+
+```js
+function commitRoot() {
+  commitWork(wipRoot.child)
+  wipRoot = null
+}
+​
+function commitWork(fiber) {
+  if (!fiber) {
+    return
+  }
+  const domParent = fiber.parent.dom
+  domParent.appendChild(fiber.dom)
+  commitWork(fiber.child)
+  commitWork(fiber.sibling)
+}
+```
+
+## 步骤 6：Reconciliation
+
+到目前为止，我们只向 DOM 添加了一些内容，但是更新或删除节点呢？
+
+这就是我们现在要做的，我们需要将我们在 render 函数上接收到的元素与我们提交到 DOM 的最后一个 fiber 树进行比较。

@@ -1,3 +1,7 @@
+/**
+ * render创建dom，然后渲染
+ * 当组件树很大的时候，render递归会造成页面卡顿
+ */
 const createElement = (type, props, ...children) => {
   return {
     type,

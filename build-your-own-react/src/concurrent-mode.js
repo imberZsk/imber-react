@@ -1,3 +1,8 @@
+/**
+ * 不能使用递归，react实现了scheduler模块来模拟requestIdleCallback，messageChannel来模拟requestIdleCallback
+ * ric接受workLoop函数，并设置nextUnitOfWork，然后具体执行工作单元是performUnitOfWork
+ *
+ */
 const createElement = (type, props, ...children) => {
   return {
     type,
