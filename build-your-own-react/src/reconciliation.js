@@ -1,16 +1,22 @@
-function createElement(type, props, ...children) {
+debugger
+/**
+ * performUnitOfWork在有fiber.parent的时候，直接appendChild不行，如果被浏览器暂停任务就不会显示完整页面
+ * 所以要分render和commit阶段，在commit阶段递归
+ * 谁和谁做比较？怎么比较？
+ */
+const createElement = (type, props, ...children) => {
   return {
     type,
     props: {
       ...props,
-      children: children.map((child) =>
-        typeof child === 'object' ? child : createTextElement(child)
-      )
+      children: children.map((child) => {
+        return typeof child === 'object' ? child : createTextElement(child)
+      })
     }
   }
 }
 
-function createTextElement(text) {
+const createTextElement = (text) => {
   return {
     type: 'TEXT_ELEMENT',
     props: {
@@ -20,9 +26,11 @@ function createTextElement(text) {
   }
 }
 
-function createDom(fiber) {
+// 根据fiber创建真实dom
+const createDom = (fiber) => {
+  // 创建对应节点
   const dom =
-    fiber.type == 'TEXT_ELEMENT'
+    fiber.type === 'TEXT_ELEMENT'
       ? document.createTextNode('')
       : document.createElement(fiber.type)
 
@@ -32,12 +40,14 @@ function createDom(fiber) {
 }
 
 const isEvent = (key) => key.startsWith('on')
+// 过滤特殊的children
 const isProperty = (key) => key !== 'children' && !isEvent(key)
+
 const isNew = (prev, next) => (key) => prev[key] !== next[key]
 const isGone = (prev, next) => (key) => !(key in next)
 
 function updateDom(dom, prevProps, nextProps) {
-  //Remove old or changed event listeners
+  // 删除旧的事件
   Object.keys(prevProps)
     .filter(isEvent)
     .filter((key) => !(key in nextProps) || isNew(prevProps, nextProps)(key))
@@ -46,7 +56,7 @@ function updateDom(dom, prevProps, nextProps) {
       dom.removeEventListener(eventType, prevProps[name])
     })
 
-  // Remove old properties
+  // 删除旧的props
   Object.keys(prevProps)
     .filter(isProperty)
     .filter(isGone(prevProps, nextProps))
@@ -54,7 +64,7 @@ function updateDom(dom, prevProps, nextProps) {
       dom[name] = ''
     })
 
-  // Set new or changed properties
+  // 添加新的props
   Object.keys(nextProps)
     .filter(isProperty)
     .filter(isNew(prevProps, nextProps))
@@ -62,7 +72,7 @@ function updateDom(dom, prevProps, nextProps) {
       dom[name] = nextProps[name]
     })
 
-  // Add event listeners
+  // 添加新的事件
   Object.keys(nextProps)
     .filter(isEvent)
     .filter(isNew(prevProps, nextProps))
@@ -97,7 +107,7 @@ function commitWork(fiber) {
   commitWork(fiber.sibling)
 }
 
-function render(element, container) {
+const render = (element, container) => {
   wipRoot = {
     dom: container,
     props: {
@@ -105,8 +115,8 @@ function render(element, container) {
     },
     alternate: currentRoot
   }
-  deletions = []
   nextUnitOfWork = wipRoot
+  deletions = []
 }
 
 let nextUnitOfWork = null
@@ -117,10 +127,15 @@ let deletions = null
 function workLoop(deadline) {
   let shouldYield = false
   while (nextUnitOfWork && !shouldYield) {
+    // 第一轮，只是构建wipRoot fiber树
     nextUnitOfWork = performUnitOfWork(nextUnitOfWork)
+    // 如果剩余时间少于 1 毫秒，则 shouldYield 被设置为 true，表示当前任务应该让出执行权。
+
+    // 为什么是0？代表什么？
     shouldYield = deadline.timeRemaining() < 1
   }
 
+  // 为什么这里就不会被中断
   if (!nextUnitOfWork && wipRoot) {
     commitRoot()
   }
@@ -130,19 +145,35 @@ function workLoop(deadline) {
 
 requestIdleCallback(workLoop)
 
+// fiber对象
+// {
+//   type
+//   props
+//   dom
+//   parent
+//   child
+//   sibling
+// }
+
+// 传入fiber,创建dom，为children创建fiber，找到下一个工作单元
 function performUnitOfWork(fiber) {
+  // 1、创建DOM
   if (!fiber.dom) {
     fiber.dom = createDom(fiber)
   }
 
+  // 2、给children创建fiber
   const elements = fiber.props.children
 
-  // fiber 和 element diff 生成新fiber
   reconcileChildren(fiber, elements)
 
+  // 3、找到下一个工作单元
+
+  // 向下递，向上归
   if (fiber.child) {
     return fiber.child
   }
+
   let nextFiber = fiber
   while (nextFiber) {
     if (nextFiber.sibling) {
@@ -152,6 +183,7 @@ function performUnitOfWork(fiber) {
   }
 }
 
+// 接收老的fiber树，和新的element，也就是说是老fiber数和新的element做diff，然后生成新的fiber树
 function reconcileChildren(wipFiber, elements) {
   let index = 0
   let oldFiber = wipFiber.alternate && wipFiber.alternate.child
@@ -161,8 +193,9 @@ function reconcileChildren(wipFiber, elements) {
     const element = elements[index]
     let newFiber = null
 
-    const sameType = oldFiber && element && element.type == oldFiber.type
+    const sameType = oldFiber && element && element.type === oldFiber.type
 
+    // 如果类型相同，则更新node
     if (sameType) {
       newFiber = {
         type: oldFiber.type,
@@ -173,6 +206,8 @@ function reconcileChildren(wipFiber, elements) {
         effectTag: 'UPDATE'
       }
     }
+
+    // 如果类型不同且有新节点，新增node
     if (element && !sameType) {
       newFiber = {
         type: element.type,
@@ -183,6 +218,8 @@ function reconcileChildren(wipFiber, elements) {
         effectTag: 'PLACEMENT'
       }
     }
+
+    // 如果有老的fiber而且类型不同，则删除node
     if (oldFiber && !sameType) {
       oldFiber.effectTag = 'DELETION'
       deletions.push(oldFiber)
@@ -194,7 +231,7 @@ function reconcileChildren(wipFiber, elements) {
 
     if (index === 0) {
       wipFiber.child = newFiber
-    } else if (element) {
+    } else {
       prevSibling.sibling = newFiber
     }
 
@@ -203,12 +240,12 @@ function reconcileChildren(wipFiber, elements) {
   }
 }
 
-const Didact = {
+const MyReact = {
   createElement,
   render
 }
 
-/** @jsx Didact.createElement */
+/** @jsx MyReact.createElement */
 const container = document.getElementById('root')
 
 const updateValue = (e) => {
@@ -222,7 +259,7 @@ const rerender = (value) => {
       <h2>Hello {value}</h2>
     </div>
   )
-  Didact.render(element, container)
+  MyReact.render(element, container)
 }
 
 rerender('World')

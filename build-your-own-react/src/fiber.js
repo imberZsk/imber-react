@@ -1,6 +1,7 @@
 /**
  * 在performUnitOfWork中，主要做了三件事，创建dom，给children创建fiber，找到下一个执行单元
  * 构建fiber树
+ * 为什么就可以中断了
  */
 const createElement = (type, props, ...children) => {
   return {
@@ -91,7 +92,7 @@ function performUnitOfWork(fiber) {
     fiber.parent.dom.appendChild(fiber.dom)
   }
 
-  // 2、给children创建fiber
+  // 2、给children创建fiber  [div]
   const elements = fiber.props.children
   let index = 0
   let prevSibling = null
@@ -141,9 +142,12 @@ const MyReact = {
 // const element = <h1 title="foo">Hello</h1>
 
 const element = (
-  <div style="background: salmon">
-    <h1>Hello World</h1>
-    <h2 style="text-align:right">from MyReact</h2>
+  <div>
+    <div style="background: salmon">
+      <h1>Hello World</h1>
+      <h2 style="text-align:right">from MyReact</h2>
+    </div>
+    <div>111</div>
   </div>
 )
 

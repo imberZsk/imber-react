@@ -31,6 +31,6 @@ element['title'] = element.props.title
 const text = document.createTextNode('')
 text.nodeValue = element.props.children
 
-node.append(text)
+node.appendChild(text)
 
-container.append(node)
+container.appendChild(node)

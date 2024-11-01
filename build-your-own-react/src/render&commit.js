@@ -60,6 +60,7 @@ const render = (element, container) => {
 }
 
 let nextUnitOfWork = null
+// currentRoot  worikinprogress
 let wipRoot = null
 
 function commitRoot() {
@@ -87,6 +88,7 @@ function workLoop(deadline) {
   }
 
   // 为什么这里就不会被中断
+  // commit阶段
   if (!nextUnitOfWork && wipRoot) {
     commitRoot()
   }
