@@ -1872,7 +1872,7 @@ Object.keys(nextProps)
 
 ```
 
-## 步骤 7
+## 步骤 7 Function Components
 
 接下来我们需要添加的是 function components 的支持。
 
@@ -1899,3 +1899,341 @@ const element = Didact.createElement(App, {
   name: 'foo'
 })
 ```
+
+函数组件在两个方面有所不同：
+
+- 来自函数组件的 fiber 没有 DOM 节点
+- 子项来自运行函数，而不是直接从 `props` 获取它们
+
+```js
+function performUnitOfWork(fiber) {
+  // 要改动的代码
+
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber)
+  }
+​
+  const elements = fiber.props.children
+  reconcileChildren(fiber, elements)
+
+  // 省略之前的代码
+​}
+```
+
+我们检查 fiber type 是否是一个函数，并根据它我们转到不同的 update 函数。
+
+在 `updateHostComponent` 中，我们执行与以前相同的操作。
+
+```js
+function performUnitOfWork(fiber) {
+  const isFunctionComponent =
+    fiber.type instanceof Function
+  if (isFunctionComponent) {
+    updateFunctionComponent(fiber)
+  } else {
+    updateHostComponent(fiber)
+  }
+
+  // 省略之前的代码
+}
+
+function updateFunctionComponent(fiber) {
+  // TODO
+}
+​
+function updateHostComponent(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber)
+  }
+  reconcileChildren(fiber, fiber.props.children)
+}
+```
+
+在 updateFunctionComponent 中，我们运行函数来获取子项
+
+对于我们的示例，这里的 `fiber.type` 是 `App` 函数，当我们运行它时，它返回 `h1` 元素。
+
+然后，一旦我们有了孩子，reconciliation 就会以同样的方式进行，我们不需要在那里做任何改变。
+
+```js
+function updateFunctionComponent(fiber) {
+  const children = [fiber.type(fiber.props)]
+  reconcileChildren(fiber, children)
+}
+```
+
+我们需要更改的是 `commitWork` 函数。
+
+```js
+function commitWork(fiber) {
+  if (!fiber) {
+    return
+  }
+​
+  const domParent = fiber.parent.dom
+  if (
+    fiber.effectTag === "PLACEMENT" &&
+    fiber.dom != null
+  ) {
+    domParent.appendChild(fiber.dom)
+  } else if (
+    fiber.effectTag === "UPDATE" &&
+    fiber.dom != null
+  ) {
+    updateDom(
+      fiber.dom,
+      fiber.alternate.props,
+      fiber.props
+    )
+  } else if (fiber.effectTag === "DELETION") {
+    domParent.removeChild(fiber.dom)
+  }
+​
+  commitWork(fiber.child)
+  commitWork(fiber.sibling)
+}
+```
+
+现在我们有了没有 DOM 节点的 fiber，我们需要改变两件事。
+
+首先，要找到 DOM 节点的父节点，我们需要沿着 fiber 树向上走，直到找到具有 DOM 节点的 fiber。
+
+```js
+function commitWork(fiber) {
+  if (!fiber) {
+    return
+  }
+​
+  // 新增
+  let domParentFiber = fiber.parent
+  while (!domParentFiber.dom) {
+    domParentFiber = domParentFiber.parent
+  }
+  const domParent = domParentFiber.dom
+​
+  if (
+    fiber.effectTag === "PLACEMENT" &&
+    fiber.dom != null
+  ) {
+    domParent.appendChild(fiber.dom)
+  } else if (
+    fiber.effectTag === "UPDATE" &&
+    fiber.dom != null
+  ) {
+    updateDom(
+      fiber.dom,
+      fiber.alternate.props,
+      fiber.props
+    )
+  } else if (fiber.effectTag === "DELETION") {
+    // 新增
+    commitDeletion(fiber, domParent)
+  }
+​
+  commitWork(fiber.child)
+  commitWork(fiber.sibling)
+}
+```
+
+当删除一个节点时，我们还需要继续前进，直到找到一个具有 DOM 节点的子节点。
+
+```js
+function commitDeletion(fiber, domParent) {
+  if (fiber.dom) {
+    domParent.removeChild(fiber.dom)
+  } else {
+    commitDeletion(fiber.child, domParent)
+  }
+}
+```
+
+## 步骤 8 Hooks
+
+最后一步。现在我们有了函数组件，让我们也添加 state。
+
+让我们将示例更改为经典的 counter 组件。每次我们单击它时，它都会将状态增加 1。
+
+请注意，我们使用 Didact.useState 来获取和更新 counter 值。
+
+```js
+const Didact = {
+  createElement,
+  render,
+  useState,
+}
+​
+/** @jsx Didact.createElement */
+function Counter() {
+  const [state, setState] = Didact.useState(1)
+  return (
+    <h1 onClick={() => setState(c => c + 1)}>
+      Count: {state}
+    </h1>
+  )
+}
+const element = <Counter />
+const container = document.getElementById("root")
+Didact.render(element, container)
+```
+
+这是我们从示例中调用 `Counter` 函数的地方。在这个函数中，我们称之为 `useState`。
+
+```js
+function updateFunctionComponent(fiber) {
+  const children = [fiber.type(fiber.props)]
+  reconcileChildren(fiber, children)
+}
+​
+function useState(initial) {
+  // TODO
+}
+```
+
+我们需要在调用函数组件之前初始化一些全局变量，以便我们可以在 useState 函数中使用它们。
+
+首先，我们设置正在进行的 fiber 。
+
+我们还向 fiber 添加了一个 hooks 数组，以支持在同一组件中多次调用 useState。我们跟踪当前的 hook 索引。
+
+```js
+let wipFiber = null
+let hookIndex = null
+​
+function updateFunctionComponent(fiber) {
+  wipFiber = fiber
+  hookIndex = 0
+  wipFiber.hooks = []
+  const children = [fiber.type(fiber.props)]
+  reconcileChildren(fiber, children)
+}
+​
+function useState(initial) {
+  // TODO
+}
+```
+
+当函数组件调用 `useState` 时，我们检查是否有旧的 hook。我们使用 hook 索引检查 fiber 的 alternate 。
+
+如果我们有一个旧的 hook，我们将 state 从旧的 hook 复制到新的 hook 上，如果没有，我们初始化 state。
+
+然后我们将新钩子添加到 fiber 中，将钩子索引增加 1，并返回状态。
+
+```js
+function useState(initial) {
+  const oldHook =
+    wipFiber.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex]
+  const hook = {
+    state: oldHook ? oldHook.state : initial,
+  }
+​
+  wipFiber.hooks.push(hook)
+  hookIndex++
+  return [hook.state]
+}
+```
+
+`useState` 还应该返回一个函数来更新 state，因此我们定义了一个接收 action 的 `setState` 函数（对于 `Counter` 示例，这个 action 是将 state 递增 1 的函数）。
+
+我们将该操作推送到我们添加到 hook 的队列中。
+
+然后我们做一些类似于我们在 `render` 函数中所做的事情，将一个新的正在进行的工作根设置为下一个工作单元，以便工作循环可以开始新的渲染阶段。
+
+```js
+function useState(initial) {
+  const oldHook =
+    wipFiber.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex]
+  const hook = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  }
+​
+  const setState = action => {
+    hook.queue.push(action)
+    wipRoot = {
+      dom: currentRoot.dom,
+      props: currentRoot.props,
+      alternate: currentRoot,
+    }
+    nextUnitOfWork = wipRoot
+    deletions = []
+  }
+​
+  wipFiber.hooks.push(hook)
+  hookIndex++
+  return [hook.state, setState]
+}
+```
+
+但我们尚未运行该操作。
+
+我们下次渲染组件时执行此操作，从旧的 hook 队列中获取所有 action，然后将它们一一应用到新的 hook 状态，因此当我们返回状态时，它会被更新。
+
+```js
+function useState(initial) {
+  const oldHook =
+    wipFiber.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex]
+  const hook = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  }
+​
+  const actions = oldHook ? oldHook.queue : []
+  actions.forEach(action => {
+    hook.state = action(hook.state)
+  })
+​
+  const setState = action => {
+    hook.queue.push(action)
+    wipRoot = {
+      dom: currentRoot.dom,
+      props: currentRoot.props,
+      alternate: currentRoot,
+    }
+    nextUnitOfWork = wipRoot
+    deletions = []
+  }
+​
+  wipFiber.hooks.push(hook)
+  hookIndex++
+  return [hook.state, setState]
+}
+```
+
+就这样。我们已经构建了自己的 React 版本。
+
+您可以在 [codesandbox](https://codesandbox.io/p/sandbox/didact-8-21ost) 或 [github](https://github.com/pomber/didact) 上使用它。
+
+## 结语
+
+除了帮助你理解 React 的工作原理外，这篇文章的目标之一是让你更容易更深入地了解 React 代码库。这就是为什么我们几乎在所有地方都使用相同的变量和函数名称。
+
+例如，如果你在真实 React 应用程序的一个函数组件中添加了一个断点，调用堆栈应该向你显示：
+
+- workLoop workLoop 工作循环
+- performUnitOfWork
+- updateFunctionComponent
+
+我们没有包含很多 React 功能和优化。例如，以下是 React 的不同之处：
+
+- 在 Didact 中，我们在渲染阶段遍历整个树。相反，React 遵循一些提示和启发式方法来跳过没有任何变化的整个子树。
+- 我们还在 commit 阶段遍历整个 tree。React 保留一个链表，其中仅包含具有 effect 的 fibers，并且只访问这些 fiber。
+- 每次我们构建一个新的 work in progress 树时，我们都会为每个 fiber 创建新的对象。React 回收了之前树的 fiber。
+- 当 Didact 在渲染阶段收到新的更新时，它会丢弃正在进行的工作树并从根重新开始。React 使用过期时间戳标记每个更新，并使用它来决定哪个更新具有更高的优先级。
+- 还有更多...
+
+您还可以轻松添加一些功能：
+
+- 为 style 属性使用对象
+- 展平子数组
+- useEffect 钩子
+- 根据 key 做 reconciliation
+
+如果您向 Didact 添加了这些或其他功能中的任何一个，请向 [GitHub 存储库](https://github.com/pomber/didact)发送拉取请求，以便其他人可以看到它。
+
+感谢阅读！
