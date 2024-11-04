@@ -223,7 +223,7 @@ function performUnitOfWork(fiber) {
   }
 }
 
-// 意思听起来是当前fiber
+// 当前fiber
 let wipFiber = null
 
 // hook索引，因为是单向链表
@@ -240,15 +240,19 @@ function updateFunctionComponent(fiber) {
   // wipFiber的hook置为空数组
   wipFiber.hooks = []
 
-  // 构建子fiber树
+  // 执行函数组件，才会触发下面的useState，拿到的element去下一步构建fiber树   执行1
   const children = [fiber.type(fiber.props)]
 
   // 调度，构建子fiber树
-  reconcileChildren(fiber, children)
+  reconcileChildren(fiber, children) //执行3
 }
 
+// 在函数组件执行后，执行useState 执行2
+// 在当前函数组件fiber上，放了hooks数组，数组的queue是[]
 function useState(initial) {
-  // 旧的
+  console.log(hookIndex)
+
+  // 旧的，alternate对应当前fiber的旧fiber
   const oldHook =
     wipFiber.alternate &&
     wipFiber.alternate.hooks &&
@@ -259,15 +263,20 @@ function useState(initial) {
     queue: []
   }
 
+  // 更新的时候，用之前的action
   const actions = oldHook ? oldHook.queue : []
 
+  // 取出action全部执行
   actions.forEach((action) => {
+    // 更新state
     hook.state = action(hook.state)
   })
 
-  // 更新
+  // 更新整个fiber树
   const setState = (action) => {
-    // 把action添加到hook的对列里
+    // 把action添加到hook的对列里，点击的时候，保留action，然后给更新的时候用
+    // 由于对象引用和闭包，之前的  wipFiber.hooks.push(hook) 这里的hook里面的queue就有了action，
+    // 而且之前 wipFiber.hooks.push(hook) 都有顺序，这里由于是对象引用里面一层的，所以也有顺序
     hook.queue.push(action)
 
     // 更新的时候，创建新的wipRoot fiber树
@@ -284,7 +293,7 @@ function useState(initial) {
     deletions = []
   }
 
-  // 当前fiber的hooks数组里添加hook
+  // 当前fiber的hooks数组里添加hook，hook数组
   wipFiber.hooks.push(hook)
 
   hookIndex++
@@ -406,7 +415,11 @@ function Counter() {
   )
 }
 
-const element = <Counter />
+const element = (
+  <div>
+    <Counter />
+  </div>
+)
 
 const container = document.getElementById('root')
 
