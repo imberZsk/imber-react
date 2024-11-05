@@ -1,21 +1,5 @@
-/**
- * createElement就是把jsx生成一个element对象
- * 生成的对象结构是{type:'',props:{children:[]}}
- * 需要区分文本节点
- */
 import React from 'react'
 import ReactDOM from 'react-dom'
-
-// 只写了React.createElement还不能在页面使用，生成的element,react无法识别无法render,要写了render才行，这个element不够完善
-
-// const element = <h1 title="foo">Hello</h1>
-// const element = React.createElement(
-//   'h1',
-//   {
-//     title: 'foo'
-//   },
-//   'Hello'
-// )
 
 // 三个参数，里面的children要看是不是对象还是文本节点
 const createElement = (type, props, ...children) => {

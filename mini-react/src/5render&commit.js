@@ -1,8 +1,3 @@
-/**
- * 在performUnitOfWork中，主要做了三件事，创建dom，给children创建fiber，找到下一个执行单元
- * 构建fiber树
- * 为什么就可以中断了
- */
 const createElement = (type, props, ...children) => {
   return {
     type,
@@ -49,15 +44,34 @@ const createDom = (fiber) => {
 }
 
 const render = (element, container) => {
-  nextUnitOfWork = {
+  wipRoot = {
     dom: container,
     props: {
       children: [element]
     }
   }
+  nextUnitOfWork = wipRoot
 }
 
 let nextUnitOfWork = null
+// currentRoot  worikinprogress
+let wipRoot = null
+
+function commitRoot() {
+  // TODO add nodes to dom
+  commitWork(wipRoot.child)
+  wipRoot = null
+}
+
+function commitWork(fiber) {
+  if (!fiber) {
+    return
+  }
+  const domParent = fiber.parent.dom
+  domParent.appendChild(fiber.dom)
+  commitWork(fiber.child)
+  commitWork(fiber.sibling)
+}
 
 function workLoop(deadline) {
   let shouldYield = false
@@ -66,6 +80,13 @@ function workLoop(deadline) {
     // 如果剩余时间少于 1 毫秒，则 shouldYield 被设置为 true，表示当前任务应该让出执行权。
     shouldYield = deadline.timeRemaining() < 1
   }
+
+  // 为什么这里就不会被中断
+  // commit阶段
+  if (!nextUnitOfWork && wipRoot) {
+    commitRoot()
+  }
+
   requestIdleCallback(workLoop)
 }
 
@@ -88,11 +109,11 @@ function performUnitOfWork(fiber) {
     fiber.dom = createDom(fiber)
   }
 
-  if (fiber.parent) {
-    fiber.parent.dom.appendChild(fiber.dom)
-  }
+  // if (fiber.parent) {
+  //   fiber.parent.dom.appendChild(fiber.dom)
+  // }
 
-  // 2、给children创建fiber  [div]
+  // 2、给children创建fiber
   const elements = fiber.props.children
   let index = 0
   let prevSibling = null
@@ -142,12 +163,9 @@ const MyReact = {
 // const element = <h1 title="foo">Hello</h1>
 
 const element = (
-  <div>
-    <div style="background: salmon">
-      <h1>Hello World</h1>
-      <h2 style="text-align:right">from MyReact</h2>
-    </div>
-    <div>111</div>
+  <div style="background: salmon">
+    <h1>Hello World</h1>
+    <h2 style="text-align:right">from MyReact</h2>
   </div>
 )
 

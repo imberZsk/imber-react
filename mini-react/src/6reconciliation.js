@@ -1,9 +1,3 @@
-debugger
-/**
- * performUnitOfWork在有fiber.parent的时候，直接appendChild不行，如果被浏览器暂停任务就不会显示完整页面
- * 所以要分render和commit阶段，在commit阶段递归
- * 谁和谁做比较？怎么比较？
- */
 const createElement = (type, props, ...children) => {
   return {
     type,
