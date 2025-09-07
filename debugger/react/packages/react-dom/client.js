@@ -26,15 +26,10 @@ export function createRoot(
   container: Element | Document | DocumentFragment,
   options?: CreateRootOptions,
 ): RootType {
-  if (__DEV__) {
-    Internals.usingClientEntryPoint = true;
-  }
   try {
+    debugger;
     return createRootImpl(container, options);
   } finally {
-    if (__DEV__) {
-      Internals.usingClientEntryPoint = false;
-    }
   }
 }
 

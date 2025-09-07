@@ -5,11 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import getComponentNameFromType from 'shared/getComponentNameFromType';
 import ReactSharedInternals from 'shared/ReactSharedInternals';
 import hasOwnProperty from 'shared/hasOwnProperty';
 import {REACT_ELEMENT_TYPE} from 'shared/ReactSymbols';
-import {checkKeyStringCoercion} from 'shared/CheckStringCoercion';
 
 const ReactCurrentOwner = ReactSharedInternals.ReactCurrentOwner;
 
@@ -20,183 +18,45 @@ const RESERVED_PROPS = {
   __source: true,
 };
 
-let specialPropKeyWarningShown;
-let specialPropRefWarningShown;
-let didWarnAboutStringRefs;
-
-if (__DEV__) {
-  didWarnAboutStringRefs = {};
-}
-
 function hasValidRef(config) {
-  if (__DEV__) {
-    if (hasOwnProperty.call(config, 'ref')) {
-      const getter = Object.getOwnPropertyDescriptor(config, 'ref').get;
-      if (getter && getter.isReactWarning) {
-        return false;
-      }
-    }
-  }
   return config.ref !== undefined;
 }
 
 function hasValidKey(config) {
-  if (__DEV__) {
-    if (hasOwnProperty.call(config, 'key')) {
-      const getter = Object.getOwnPropertyDescriptor(config, 'key').get;
-      if (getter && getter.isReactWarning) {
-        return false;
-      }
-    }
-  }
   return config.key !== undefined;
 }
 
-function warnIfStringRefCannotBeAutoConverted(config, self) {
-  if (__DEV__) {
-    if (
-      typeof config.ref === 'string' &&
-      ReactCurrentOwner.current &&
-      self &&
-      ReactCurrentOwner.current.stateNode !== self
-    ) {
-      const componentName = getComponentNameFromType(
-        ReactCurrentOwner.current.type,
-      );
-
-      if (!didWarnAboutStringRefs[componentName]) {
-        console.error(
-          'Component "%s" contains the string ref "%s". ' +
-            'Support for string refs will be removed in a future major release. ' +
-            'This case cannot be automatically converted to an arrow function. ' +
-            'We ask you to manually fix this case by using useRef() or createRef() instead. ' +
-            'Learn more about using refs safely here: ' +
-            'https://reactjs.org/link/strict-mode-string-ref',
-          getComponentNameFromType(ReactCurrentOwner.current.type),
-          config.ref,
-        );
-        didWarnAboutStringRefs[componentName] = true;
-      }
-    }
-  }
-}
-
-function defineKeyPropWarningGetter(props, displayName) {
-  if (__DEV__) {
-    const warnAboutAccessingKey = function() {
-      if (!specialPropKeyWarningShown) {
-        specialPropKeyWarningShown = true;
-        console.error(
-          '%s: `key` is not a prop. Trying to access it will result ' +
-            'in `undefined` being returned. If you need to access the same ' +
-            'value within the child component, you should pass it as a different ' +
-            'prop. (https://reactjs.org/link/special-props)',
-          displayName,
-        );
-      }
-    };
-    warnAboutAccessingKey.isReactWarning = true;
-    Object.defineProperty(props, 'key', {
-      get: warnAboutAccessingKey,
-      configurable: true,
-    });
-  }
-}
-
-function defineRefPropWarningGetter(props, displayName) {
-  if (__DEV__) {
-    const warnAboutAccessingRef = function() {
-      if (!specialPropRefWarningShown) {
-        specialPropRefWarningShown = true;
-        console.error(
-          '%s: `ref` is not a prop. Trying to access it will result ' +
-            'in `undefined` being returned. If you need to access the same ' +
-            'value within the child component, you should pass it as a different ' +
-            'prop. (https://reactjs.org/link/special-props)',
-          displayName,
-        );
-      }
-    };
-    warnAboutAccessingRef.isReactWarning = true;
-    Object.defineProperty(props, 'ref', {
-      get: warnAboutAccessingRef,
-      configurable: true,
-    });
-  }
-}
-
 /**
- * Factory method to create a new React element. This no longer adheres to
- * the class pattern, so do not use new to call it. Also, instanceof check
- * will not work. Instead test $$typeof field against Symbol.for('react.element') to check
- * if something is a React Element.
+ * 创建新React元素的工厂方法。这不再遵循类模式，所以不要使用new来调用它。
+ * 另外，instanceof检查也不会工作。相反，测试$$typeof字段与Symbol.for('react.element')来检查
+ * 某个东西是否是React元素。
  *
  * @param {*} type
  * @param {*} props
  * @param {*} key
  * @param {string|object} ref
  * @param {*} owner
- * @param {*} self A *temporary* helper to detect places where `this` is
- * different from the `owner` when React.createElement is called, so that we
- * can warn. We want to get rid of owner and replace string `ref`s with arrow
- * functions, and as long as `this` and owner are the same, there will be no
- * change in behavior.
- * @param {*} source An annotation object (added by a transpiler or otherwise)
- * indicating filename, line number, and/or other information.
+ * @param {*} self 一个*临时的*辅助工具，用于检测当调用React.createElement时
+ * `this`与`owner`不同的地方，这样我们可以发出警告。我们想要摆脱owner并用箭头函数
+ * 替换字符串`ref`，只要`this`和owner相同，就不会有行为变化。
+ * @param {*} source 注释对象（由转译器或其他方式添加）
+ * 指示文件名、行号和/或其他信息。
  * @internal
  */
 const ReactElement = function(type, key, ref, self, source, owner, props) {
   const element = {
-    // This tag allows us to uniquely identify this as a React Element
+    // 这个标签允许我们唯一地识别这是一个React元素
     $$typeof: REACT_ELEMENT_TYPE,
 
-    // Built-in properties that belong on the element
+    // 属于元素的内置属性
     type: type,
     key: key,
     ref: ref,
     props: props,
 
-    // Record the component responsible for creating this element.
+    // 记录负责创建此元素的组件。
     _owner: owner,
   };
-
-  if (__DEV__) {
-    // The validation flag is currently mutative. We put it on
-    // an external backing store so that we can freeze the whole object.
-    // This can be replaced with a WeakMap once they are implemented in
-    // commonly used development environments.
-    element._store = {};
-
-    // To make comparing ReactElements easier for testing purposes, we make
-    // the validation flag non-enumerable (where possible, which should
-    // include every environment we run tests in), so the test framework
-    // ignores it.
-    Object.defineProperty(element._store, 'validated', {
-      configurable: false,
-      enumerable: false,
-      writable: true,
-      value: false,
-    });
-    // self and source are DEV only properties.
-    Object.defineProperty(element, '_self', {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: self,
-    });
-    // Two elements created in two different places should be considered
-    // equal for testing purposes and therefore we hide it from enumeration.
-    Object.defineProperty(element, '_source', {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: source,
-    });
-    if (Object.freeze) {
-      Object.freeze(element.props);
-      Object.freeze(element);
-    }
-  }
 
   return element;
 };
@@ -210,29 +70,23 @@ const ReactElement = function(type, key, ref, self, source, owner, props) {
 export function jsx(type, config, maybeKey) {
   let propName;
 
-  // Reserved names are extracted
+  // 提取保留名称
   const props = {};
 
   let key = null;
   let ref = null;
 
-  // Currently, key can be spread in as a prop. This causes a potential
-  // issue if key is also explicitly declared (ie. <div {...props} key="Hi" />
-  // or <div key="Hi" {...props} /> ). We want to deprecate key spread,
-  // but as an intermediary step, we will use jsxDEV for everything except
-  // <div {...props} key="Hi" />, because we aren't currently able to tell if
-  // key is explicitly declared to be undefined or not.
+  // 目前，key可以作为prop展开。如果key也被显式声明，这会导致潜在问题
+  // （即<div {...props} key="Hi" />或<div key="Hi" {...props} />）。
+  // 我们想要弃用key展开，但作为中间步骤，我们将对除<div {...props} key="Hi" />
+  // 之外的所有内容使用jsxDEV，因为我们目前无法判断key是否被显式声明为undefined。
   if (maybeKey !== undefined) {
-    if (__DEV__) {
-      checkKeyStringCoercion(maybeKey);
-    }
+    // eslint-disable-next-line react-internal/safe-string-coercion
     key = '' + maybeKey;
   }
 
   if (hasValidKey(config)) {
-    if (__DEV__) {
-      checkKeyStringCoercion(config.key);
-    }
+    // eslint-disable-next-line react-internal/safe-string-coercion
     key = '' + config.key;
   }
 
@@ -240,7 +94,7 @@ export function jsx(type, config, maybeKey) {
     ref = config.ref;
   }
 
-  // Remaining properties are added to a new props object
+  // 剩余属性被添加到新的props对象中
   for (propName in config) {
     if (
       hasOwnProperty.call(config, propName) &&
@@ -250,7 +104,7 @@ export function jsx(type, config, maybeKey) {
     }
   }
 
-  // Resolve default props
+  // 解析默认props
   if (type && type.defaultProps) {
     const defaultProps = type.defaultProps;
     for (propName in defaultProps) {
@@ -259,6 +113,17 @@ export function jsx(type, config, maybeKey) {
       }
     }
   }
+
+  debugger;
+
+  console.log('jsx', {
+    type,
+    key,
+    ref,
+    self,
+    source,
+    props,
+  });
 
   return ReactElement(
     type,
@@ -278,81 +143,6 @@ export function jsx(type, config, maybeKey) {
  * @param {string} key
  */
 export function jsxDEV(type, config, maybeKey, source, self) {
-  if (__DEV__) {
-    let propName;
-
-    // Reserved names are extracted
-    const props = {};
-
-    let key = null;
-    let ref = null;
-
-    // Currently, key can be spread in as a prop. This causes a potential
-    // issue if key is also explicitly declared (ie. <div {...props} key="Hi" />
-    // or <div key="Hi" {...props} /> ). We want to deprecate key spread,
-    // but as an intermediary step, we will use jsxDEV for everything except
-    // <div {...props} key="Hi" />, because we aren't currently able to tell if
-    // key is explicitly declared to be undefined or not.
-    if (maybeKey !== undefined) {
-      if (__DEV__) {
-        checkKeyStringCoercion(maybeKey);
-      }
-      key = '' + maybeKey;
-    }
-
-    if (hasValidKey(config)) {
-      if (__DEV__) {
-        checkKeyStringCoercion(config.key);
-      }
-      key = '' + config.key;
-    }
-
-    if (hasValidRef(config)) {
-      ref = config.ref;
-      warnIfStringRefCannotBeAutoConverted(config, self);
-    }
-
-    // Remaining properties are added to a new props object
-    for (propName in config) {
-      if (
-        hasOwnProperty.call(config, propName) &&
-        !RESERVED_PROPS.hasOwnProperty(propName)
-      ) {
-        props[propName] = config[propName];
-      }
-    }
-
-    // Resolve default props
-    if (type && type.defaultProps) {
-      const defaultProps = type.defaultProps;
-      for (propName in defaultProps) {
-        if (props[propName] === undefined) {
-          props[propName] = defaultProps[propName];
-        }
-      }
-    }
-
-    if (key || ref) {
-      const displayName =
-        typeof type === 'function'
-          ? type.displayName || type.name || 'Unknown'
-          : type;
-      if (key) {
-        defineKeyPropWarningGetter(props, displayName);
-      }
-      if (ref) {
-        defineRefPropWarningGetter(props, displayName);
-      }
-    }
-
-    return ReactElement(
-      type,
-      key,
-      ref,
-      self,
-      source,
-      ReactCurrentOwner.current,
-      props,
-    );
-  }
+  // DEV逻辑已移除，返回null
+  return null;
 }

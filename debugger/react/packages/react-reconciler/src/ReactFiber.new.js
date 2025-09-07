@@ -1,8 +1,7 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * 版权所有 (c) Facebook, Inc. 及其关联公司。
  *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
+ * 此源代码根据在根目录的 LICENSE 文件中找到的 MIT 许可证获得许可。
  *
  * @flow
  */
@@ -112,7 +111,7 @@ if (__DEV__) {
     new Set([nonExtensibleObject]);
     /* eslint-enable no-new */
   } catch (e) {
-    // TODO: Consider warning about bad polyfills
+    // TODO: 考虑警告关于不良的 polyfills
     hasBadMapPolyfill = true;
   }
 }
@@ -123,7 +122,7 @@ function FiberNode(
   key: null | string,
   mode: TypeOfMode,
 ) {
-  // Instance
+  // 实例
   this.tag = tag;
   this.key = key;
   this.elementType = null;
@@ -146,7 +145,7 @@ function FiberNode(
 
   this.mode = mode;
 
-  // Effects
+  // 副作用
   this.flags = NoFlags;
   this.subtreeFlags = NoFlags;
   this.deletions = null;
@@ -157,16 +156,16 @@ function FiberNode(
   this.alternate = null;
 
   if (enableProfilerTimer) {
-    // Note: The following is done to avoid a v8 performance cliff.
+    // 注意：以下操作是为了避免 v8 性能悬崖。
     //
-    // Initializing the fields below to smis and later updating them with
-    // double values will cause Fibers to end up having separate shapes.
-    // This behavior/bug has something to do with Object.preventExtension().
-    // Fortunately this only impacts DEV builds.
-    // Unfortunately it makes React unusably slow for some applications.
-    // To work around this, initialize the fields below with doubles.
+    // 将下面的字段初始化为 smis，然后用双精度值更新它们
+    // 会导致 Fibers 最终具有不同的形状。
+    // 这种行为/错误与 Object.preventExtension() 有关。
+    // 幸运的是，这只会影响 DEV 构建。
+    // 不幸的是，这会使 React 在某些应用程序中变得不可用。
+    // 为了解决这个问题，用双精度值初始化下面的字段。
     //
-    // Learn more about this here:
+    // 了解更多信息：
     // https://github.com/facebook/react/issues/14365
     // https://bugs.chromium.org/p/v8/issues/detail?id=8538
     this.actualDuration = Number.NaN;
@@ -174,9 +173,9 @@ function FiberNode(
     this.selfBaseDuration = Number.NaN;
     this.treeBaseDuration = Number.NaN;
 
-    // It's okay to replace the initial doubles with smis after initialization.
-    // This won't trigger the performance cliff mentioned above,
-    // and it simplifies other profiler code (including DevTools).
+    // 在初始化后用 smis 替换初始双精度值是没问题的。
+    // 这不会触发上面提到的性能悬崖，
+    // 并且简化了其他分析器代码（包括 DevTools）。
     this.actualDuration = 0;
     this.actualStartTime = -1;
     this.selfBaseDuration = 0;
@@ -184,7 +183,7 @@ function FiberNode(
   }
 
   if (__DEV__) {
-    // This isn't directly used but is handy for debugging internals:
+    // 这不是直接使用的，但对调试内部结构很有用：
 
     this._debugSource = null;
     this._debugOwner = null;
@@ -196,26 +195,22 @@ function FiberNode(
   }
 }
 
-// This is a constructor function, rather than a POJO constructor, still
-// please ensure we do the following:
-// 1) Nobody should add any instance methods on this. Instance methods can be
-//    more difficult to predict when they get optimized and they are almost
-//    never inlined properly in static compilers.
-// 2) Nobody should rely on `instanceof Fiber` for type testing. We should
-//    always know when it is a fiber.
-// 3) We might want to experiment with using numeric keys since they are easier
-//    to optimize in a non-JIT environment.
-// 4) We can easily go from a constructor to a createFiber object literal if that
-//    is faster.
-// 5) It should be easy to port this to a C struct and keep a C implementation
-//    compatible.
+// 这是一个构造函数，而不是 POJO 构造函数，
+// 请确保我们做到以下几点：
+// 1) 没有人应该在此上添加任何实例方法。实例方法在优化时更难预测，
+//    并且几乎从不在静态编译器中正确内联。
+// 2) 没有人应该依赖 `instanceof Fiber` 进行类型测试。我们应该
+//    总是知道何时是 fiber。
+// 3) 我们可能想尝试使用数字键，因为它们在非 JIT 环境中更容易优化。
+// 4) 如果更快的话，我们可以轻松地从构造函数转换为 createFiber 对象字面量。
+// 5) 应该很容易将此移植到 C 结构体并保持 C 实现兼容。
 const createFiber = function(
   tag: WorkTag,
   pendingProps: mixed,
   key: null | string,
   mode: TypeOfMode,
 ): Fiber {
-  // $FlowFixMe: the shapes are exact here but Flow doesn't like constructors
+  // $FlowFixMe: 这里的形状是精确的，但 Flow 不喜欢构造函数
   return new FiberNode(tag, pendingProps, key, mode);
 };
 
@@ -247,15 +242,14 @@ export function resolveLazyComponentTag(Component: Function): WorkTag {
   return IndeterminateComponent;
 }
 
-// This is used to create an alternate fiber to do work on.
+// 这用于创建一个备用 fiber 来进行工作。
 export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
   let workInProgress = current.alternate;
   if (workInProgress === null) {
-    // We use a double buffering pooling technique because we know that we'll
-    // only ever need at most two versions of a tree. We pool the "other" unused
-    // node that we're free to reuse. This is lazily created to avoid allocating
-    // extra objects for things that are never updated. It also allow us to
-    // reclaim the extra memory if needed.
+    // 我们使用双缓冲池技术，因为我们知道我们最多只需要两个版本的树。
+    // 我们池化可以自由重用的"其他"未使用节点。
+    // 这是延迟创建的，以避免为从未更新的东西分配额外对象。
+    // 它还允许我们在需要时回收额外内存。
     workInProgress = createFiber(
       current.tag,
       pendingProps,
@@ -267,7 +261,7 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
     workInProgress.stateNode = current.stateNode;
 
     if (__DEV__) {
-      // DEV-only fields
+      // 仅开发环境字段
 
       workInProgress._debugSource = current._debugSource;
       workInProgress._debugOwner = current._debugOwner;
@@ -278,29 +272,29 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
     current.alternate = workInProgress;
   } else {
     workInProgress.pendingProps = pendingProps;
-    // Needed because Blocks store data on type.
+    // 需要，因为 Blocks 在类型上存储数据。
     workInProgress.type = current.type;
 
-    // We already have an alternate.
-    // Reset the effect tag.
+    // 我们已经有一个备用。
+    // 重置副作用标签。
     workInProgress.flags = NoFlags;
 
-    // The effects are no longer valid.
+    // 副作用不再有效。
     workInProgress.subtreeFlags = NoFlags;
     workInProgress.deletions = null;
 
     if (enableProfilerTimer) {
-      // We intentionally reset, rather than copy, actualDuration & actualStartTime.
-      // This prevents time from endlessly accumulating in new commits.
-      // This has the downside of resetting values for different priority renders,
-      // But works for yielding (the common case) and should support resuming.
+      // 我们有意重置而不是复制 actualDuration 和 actualStartTime。
+      // 这防止时间在新提交中无限累积。
+      // 这有重置不同优先级渲染值的缺点，
+      // 但适用于让步（常见情况）并应该支持恢复。
       workInProgress.actualDuration = 0;
       workInProgress.actualStartTime = -1;
     }
   }
 
-  // Reset all effects except static ones.
-  // Static effects are not specific to a render.
+  // 重置除静态效果外的所有效果。
+  // 静态效果不特定于渲染。
   workInProgress.flags = current.flags & StaticMask;
   workInProgress.childLanes = current.childLanes;
   workInProgress.lanes = current.lanes;
@@ -310,8 +304,8 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
   workInProgress.memoizedState = current.memoizedState;
   workInProgress.updateQueue = current.updateQueue;
 
-  // Clone the dependencies object. This is mutated during the render phase, so
-  // it cannot be shared with the current fiber.
+  // 克隆依赖对象。这在渲染阶段被修改，所以
+  // 它不能与当前 fiber 共享。
   const currentDependencies = current.dependencies;
   workInProgress.dependencies =
     currentDependencies === null
@@ -321,7 +315,7 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
           firstContext: currentDependencies.firstContext,
         };
 
-  // These will be overridden during the parent's reconciliation
+  // 这些将在父级协调期间被覆盖
   workInProgress.sibling = current.sibling;
   workInProgress.index = current.index;
   workInProgress.ref = current.ref;
@@ -353,25 +347,24 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
   return workInProgress;
 }
 
-// Used to reuse a Fiber for a second pass.
+// 用于重用 Fiber 进行第二次传递。
 export function resetWorkInProgress(workInProgress: Fiber, renderLanes: Lanes) {
-  // This resets the Fiber to what createFiber or createWorkInProgress would
-  // have set the values to before during the first pass. Ideally this wouldn't
-  // be necessary but unfortunately many code paths reads from the workInProgress
-  // when they should be reading from current and writing to workInProgress.
+  // 这将 Fiber 重置为 createFiber 或 createWorkInProgress 在第一次传递期间
+  // 会设置的值。理想情况下这不会必要，但不幸的是许多代码路径从 workInProgress
+  // 读取，而它们应该从 current 读取并写入 workInProgress。
 
-  // We assume pendingProps, index, key, ref, return are still untouched to
-  // avoid doing another reconciliation.
+  // 我们假设 pendingProps、index、key、ref、return 仍然未被触及，
+  // 以避免进行另一次协调。
 
-  // Reset the effect flags but keep any Placement tags, since that's something
-  // that child fiber is setting, not the reconciliation.
+  // 重置效果标志但保留任何 Placement 标签，因为这是
+  // 子 fiber 设置的，而不是协调。
   workInProgress.flags &= StaticMask | Placement;
 
-  // The effects are no longer valid.
+  // 副作用不再有效。
 
   const current = workInProgress.alternate;
   if (current === null) {
-    // Reset to createFiber's initial values.
+    // 重置为 createFiber 的初始值。
     workInProgress.childLanes = NoLanes;
     workInProgress.lanes = renderLanes;
 
@@ -386,13 +379,13 @@ export function resetWorkInProgress(workInProgress: Fiber, renderLanes: Lanes) {
     workInProgress.stateNode = null;
 
     if (enableProfilerTimer) {
-      // Note: We don't reset the actualTime counts. It's useful to accumulate
-      // actual time across multiple render passes.
+      // 注意：我们不重置 actualTime 计数。在多次渲染传递中
+      // 累积实际时间是有用的。
       workInProgress.selfBaseDuration = 0;
       workInProgress.treeBaseDuration = 0;
     }
   } else {
-    // Reset to the cloned values that createWorkInProgress would've.
+    // 重置为 createWorkInProgress 会克隆的值。
     workInProgress.childLanes = current.childLanes;
     workInProgress.lanes = current.lanes;
 
@@ -402,11 +395,11 @@ export function resetWorkInProgress(workInProgress: Fiber, renderLanes: Lanes) {
     workInProgress.memoizedProps = current.memoizedProps;
     workInProgress.memoizedState = current.memoizedState;
     workInProgress.updateQueue = current.updateQueue;
-    // Needed because Blocks store data on type.
+    // 需要，因为 Blocks 在类型上存储数据。
     workInProgress.type = current.type;
 
-    // Clone the dependencies object. This is mutated during the render phase, so
-    // it cannot be shared with the current fiber.
+    // 克隆依赖对象。这在渲染阶段被修改，所以
+    // 它不能与当前 fiber 共享。
     const currentDependencies = current.dependencies;
     workInProgress.dependencies =
       currentDependencies === null
@@ -417,8 +410,8 @@ export function resetWorkInProgress(workInProgress: Fiber, renderLanes: Lanes) {
           };
 
     if (enableProfilerTimer) {
-      // Note: We don't reset the actualTime counts. It's useful to accumulate
-      // actual time across multiple render passes.
+      // 注意：我们不重置 actualTime 计数。在多次渲染传递中
+      // 累积实际时间是有用的。
       workInProgress.selfBaseDuration = current.selfBaseDuration;
       workInProgress.treeBaseDuration = current.treeBaseDuration;
     }
@@ -445,10 +438,10 @@ export function createHostRootFiber(
       mode |= StrictLegacyMode | StrictEffectsMode;
     }
     if (
-      // We only use this flag for our repo tests to check both behaviors.
-      // TODO: Flip this flag and rename it something like "forceConcurrentByDefaultForTesting"
+      // 我们只使用这个标志进行仓库测试以检查两种行为。
+      // TODO: 翻转这个标志并将其重命名为类似 "forceConcurrentByDefaultForTesting"
       !enableSyncDefaultUpdates ||
-      // Only for internal experiments.
+      // 仅用于内部实验。
       (allowConcurrentByDefault && concurrentUpdatesByDefaultOverride)
     ) {
       mode |= ConcurrentUpdatesByDefaultMode;
@@ -458,9 +451,9 @@ export function createHostRootFiber(
   }
 
   if (enableProfilerTimer && isDevToolsPresent) {
-    // Always collect profile timings when DevTools are present.
-    // This enables DevTools to start capturing timing at any point–
-    // Without some nodes in the tree having empty base times.
+    // 当 DevTools 存在时总是收集配置文件时间。
+    // 这使 DevTools 能够在任何点开始捕获时间–
+    // 而不会让树中的某些节点具有空的基础时间。
     mode |= ProfileMode;
   }
 
@@ -476,7 +469,7 @@ export function createFiberFromTypeAndProps(
   lanes: Lanes,
 ): Fiber {
   let fiberTag = IndeterminateComponent;
-  // The resolved type is set if we know what the final type will be. I.e. it's not lazy.
+  // 如果我们知道最终类型是什么，则设置解析类型。即它不是惰性的。
   let resolvedType = type;
   if (typeof type === 'function') {
     if (shouldConstruct(type)) {
@@ -499,7 +492,7 @@ export function createFiberFromTypeAndProps(
         fiberTag = Mode;
         mode |= StrictLegacyMode;
         if (enableStrictEffects && (mode & ConcurrentMode) !== NoMode) {
-          // Strict effects should never run on legacy roots
+          // 严格效果永远不应该在遗留根上运行
           mode |= StrictEffectsMode;
         }
         break;
@@ -545,7 +538,7 @@ export function createFiberFromTypeAndProps(
               fiberTag = ContextProvider;
               break getTag;
             case REACT_CONTEXT_TYPE:
-              // This is a consumer
+              // 这是一个消费者
               fiberTag = ContextConsumer;
               break getTag;
             case REACT_FORWARD_REF_TYPE:
@@ -572,20 +565,18 @@ export function createFiberFromTypeAndProps(
               Object.keys(type).length === 0)
           ) {
             info +=
-              ' You likely forgot to export your component from the file ' +
-              "it's defined in, or you might have mixed up default and " +
-              'named imports.';
+              ' 您可能忘记从定义它的文件中导出组件，或者您可能混淆了默认和 ' +
+              '命名导入。';
           }
           const ownerName = owner ? getComponentNameFromFiber(owner) : null;
           if (ownerName) {
-            info += '\n\nCheck the render method of `' + ownerName + '`.';
+            info += '\n\n检查 `' + ownerName + '` 的渲染方法。';
           }
         }
 
         throw new Error(
-          'Element type is invalid: expected a string (for built-in ' +
-            'components) or a class/function (for composite components) ' +
-            `but got: ${type == null ? type : typeof type}.${info}`,
+          '元素类型无效：期望字符串（用于内置组件）或类/函数（用于复合组件）' +
+            `但得到：${type == null ? type : typeof type}.${info}`,
         );
       }
     }
@@ -664,7 +655,7 @@ function createFiberFromProfiler(
   if (__DEV__) {
     if (typeof pendingProps.id !== 'string') {
       console.error(
-        'Profiler must specify an "id" of type `string` as a prop. Received the type `%s` instead.',
+        'Profiler 必须指定类型为 `string` 的 "id" 作为 prop。而是收到了类型 `%s`。',
         typeof pendingProps.id,
       );
     }
@@ -736,8 +727,8 @@ export function createFiberFromLegacyHidden(
   const fiber = createFiber(LegacyHiddenComponent, pendingProps, key, mode);
   fiber.elementType = REACT_LEGACY_HIDDEN_TYPE;
   fiber.lanes = lanes;
-  // Adding a stateNode for legacy hidden because it's currently using
-  // the offscreen implementation, which depends on a state node
+  // 为遗留隐藏添加 stateNode，因为它目前使用
+  // 离屏实现，这依赖于状态节点
   const instance: OffscreenInstance = {
     visibility: OffscreenVisible,
     pendingMarkers: null,
@@ -811,28 +802,28 @@ export function createFiberFromPortal(
   fiber.lanes = lanes;
   fiber.stateNode = {
     containerInfo: portal.containerInfo,
-    pendingChildren: null, // Used by persistent updates
+    pendingChildren: null, // 由持久更新使用
     implementation: portal.implementation,
   };
   return fiber;
 }
 
-// Used for stashing WIP properties to replay failed work in DEV.
+// 用于在开发环境中存储 WIP 属性以重放失败的工作。
 export function assignFiberPropertiesInDEV(
   target: Fiber | null,
   source: Fiber,
 ): Fiber {
   if (target === null) {
-    // This Fiber's initial properties will always be overwritten.
-    // We only use a Fiber to ensure the same hidden class so DEV isn't slow.
+    // 这个 Fiber 的初始属性总是会被覆盖。
+    // 我们只使用 Fiber 来确保相同的隐藏类，这样开发环境不会变慢。
     target = createFiber(IndeterminateComponent, null, null, NoMode);
   }
 
-  // This is intentionally written as a list of all properties.
-  // We tried to use Object.assign() instead but this is called in
-  // the hottest path, and Object.assign() was too slow:
+  // 这有意写成所有属性的列表。
+  // 我们尝试使用 Object.assign() 代替，但这在
+  // 最热路径中被调用，而 Object.assign() 太慢了：
   // https://github.com/facebook/react/issues/12502
-  // This code is DEV-only so size is not a concern.
+  // 这段代码仅用于开发环境，所以大小不是问题。
 
   target.tag = source.tag;
   target.key = source.key;

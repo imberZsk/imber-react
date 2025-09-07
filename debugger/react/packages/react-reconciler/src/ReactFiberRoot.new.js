@@ -26,15 +26,12 @@ import {
   createLaneMap,
 } from './ReactFiberLane.new';
 import {
-  enableSuspenseCallback,
   enableCache,
   enableProfilerCommitHooks,
   enableProfilerTimer,
   enableUpdaterTracking,
-  enableTransitionTracing,
 } from 'shared/ReactFeatureFlags';
 import {initializeUpdateQueue} from './ReactFiberClassUpdateQueue.new';
-import {LegacyRoot, ConcurrentRoot} from './ReactRootTags';
 import {createCache, retainCache} from './ReactFiberCacheComponent.new';
 
 export type RootState = {
@@ -84,46 +81,7 @@ function FiberRootNode(
     this.pooledCacheLanes = NoLanes;
   }
 
-  if (supportsHydration) {
-    this.mutableSourceEagerHydrationData = null;
-  }
-
-  if (enableSuspenseCallback) {
-    this.hydrationCallbacks = null;
-  }
-
   this.incompleteTransitions = new Map();
-  if (enableTransitionTracing) {
-    this.transitionCallbacks = null;
-    const transitionLanesMap = (this.transitionLanes = []);
-    for (let i = 0; i < TotalLanes; i++) {
-      transitionLanesMap.push(null);
-    }
-  }
-
-  if (enableProfilerTimer && enableProfilerCommitHooks) {
-    this.effectDuration = 0;
-    this.passiveEffectDuration = 0;
-  }
-
-  if (enableUpdaterTracking) {
-    this.memoizedUpdaters = new Set();
-    const pendingUpdatersLaneMap = (this.pendingUpdatersLaneMap = []);
-    for (let i = 0; i < TotalLanes; i++) {
-      pendingUpdatersLaneMap.push(new Set());
-    }
-  }
-
-  if (__DEV__) {
-    switch (tag) {
-      case ConcurrentRoot:
-        this._debugRootType = hydrate ? 'hydrateRoot()' : 'createRoot()';
-        break;
-      case LegacyRoot:
-        this._debugRootType = hydrate ? 'hydrate()' : 'render()';
-        break;
-    }
-  }
 }
 
 export function createFiberRoot(
@@ -134,10 +92,6 @@ export function createFiberRoot(
   hydrationCallbacks: null | SuspenseHydrationCallbacks,
   isStrictMode: boolean,
   concurrentUpdatesByDefaultOverride: null | boolean,
-  // TODO: We have several of these arguments that are conceptually part of the
-  // host config, but because they are passed in at runtime, we have to thread
-  // them through the root constructor. Perhaps we should put them all into a
-  // single type, like a DynamicHostConfig that is defined by the renderer.
   identifierPrefix: string,
   onRecoverableError: null | ((error: mixed) => void),
   transitionCallbacks: null | TransitionTracingCallbacks,
@@ -149,16 +103,7 @@ export function createFiberRoot(
     identifierPrefix,
     onRecoverableError,
   ): any);
-  if (enableSuspenseCallback) {
-    root.hydrationCallbacks = hydrationCallbacks;
-  }
 
-  if (enableTransitionTracing) {
-    root.transitionCallbacks = transitionCallbacks;
-  }
-
-  // Cyclic construction. This cheats the type system right now because
-  // stateNode is any.
   const uninitializedFiber = createHostRootFiber(
     tag,
     isStrictMode,
@@ -171,13 +116,12 @@ export function createFiberRoot(
     const initialCache = createCache();
     retainCache(initialCache);
 
-    // The pooledCache is a fresh cache instance that is used temporarily
-    // for newly mounted boundaries during a render. In general, the
-    // pooledCache is always cleared from the root at the end of a render:
-    // it is either released when render commits, or moved to an Offscreen
-    // component if rendering suspends. Because the lifetime of the pooled
-    // cache is distinct from the main memoizedState.cache, it must be
-    // retained separately.
+    // pooledCache 是一个新的缓存实例，在渲染期间临时用于
+    // 新挂载的边界。一般来说，
+    // pooledCache 总是在渲染结束时从根节点清除：
+    // 它要么在渲染提交时释放，要么在渲染暂停时移动到 Offscreen
+    // 组件。因为 pooled 缓存的生命周期与主要的 memoizedState.cache
+    // 不同，它必须单独保留。
     root.pooledCache = initialCache;
     retainCache(initialCache);
     const initialState: RootState = {
@@ -190,7 +134,7 @@ export function createFiberRoot(
     const initialState: RootState = {
       element: initialChildren,
       isDehydrated: hydrate,
-      cache: (null: any), // not enabled yet
+      cache: (null: any), // 尚未启用
     };
     uninitializedFiber.memoizedState = initialState;
   }
