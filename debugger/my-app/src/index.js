@@ -9,6 +9,8 @@ import AppJsx from './AppJsx'
 debugger
 const root = ReactDOM.createRoot(document.getElementById('root'))
 
+console.log('root', root)
+
 // 调度阶段开始
 // debugger
 // root.render(<App />)

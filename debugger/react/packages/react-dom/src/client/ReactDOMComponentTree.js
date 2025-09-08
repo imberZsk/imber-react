@@ -60,6 +60,8 @@ export function precacheFiberNode(
 }
 
 export function markContainerAsRoot(hostRoot: Fiber, node: Container): void {
+  // #root.__reactContainer$ = root.current，.current 是 uninitializedFiber，也是一个fiber
+  // containerInfo.__reactContainer$ = hostRoot;
   node[internalContainerInstanceKey] = hostRoot;
 }
 

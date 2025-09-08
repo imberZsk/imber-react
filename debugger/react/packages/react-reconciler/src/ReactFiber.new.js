@@ -154,45 +154,6 @@ function FiberNode(
   this.childLanes = NoLanes;
 
   this.alternate = null;
-
-  if (enableProfilerTimer) {
-    // 注意：以下操作是为了避免 v8 性能悬崖。
-    //
-    // 将下面的字段初始化为 smis，然后用双精度值更新它们
-    // 会导致 Fibers 最终具有不同的形状。
-    // 这种行为/错误与 Object.preventExtension() 有关。
-    // 幸运的是，这只会影响 DEV 构建。
-    // 不幸的是，这会使 React 在某些应用程序中变得不可用。
-    // 为了解决这个问题，用双精度值初始化下面的字段。
-    //
-    // 了解更多信息：
-    // https://github.com/facebook/react/issues/14365
-    // https://bugs.chromium.org/p/v8/issues/detail?id=8538
-    this.actualDuration = Number.NaN;
-    this.actualStartTime = Number.NaN;
-    this.selfBaseDuration = Number.NaN;
-    this.treeBaseDuration = Number.NaN;
-
-    // 在初始化后用 smis 替换初始双精度值是没问题的。
-    // 这不会触发上面提到的性能悬崖，
-    // 并且简化了其他分析器代码（包括 DevTools）。
-    this.actualDuration = 0;
-    this.actualStartTime = -1;
-    this.selfBaseDuration = 0;
-    this.treeBaseDuration = 0;
-  }
-
-  if (__DEV__) {
-    // 这不是直接使用的，但对调试内部结构很有用：
-
-    this._debugSource = null;
-    this._debugOwner = null;
-    this._debugNeedsRemount = false;
-    this._debugHookTypes = null;
-    if (!hasBadMapPolyfill && typeof Object.preventExtensions === 'function') {
-      Object.preventExtensions(this);
-    }
-  }
 }
 
 // 这是一个构造函数，而不是 POJO 构造函数，
@@ -427,27 +388,7 @@ export function createHostRootFiber(
 ): Fiber {
   let mode;
   if (tag === ConcurrentRoot) {
-    mode = ConcurrentMode;
-    if (isStrictMode === true) {
-      mode |= StrictLegacyMode;
-
-      if (enableStrictEffects) {
-        mode |= StrictEffectsMode;
-      }
-    } else if (enableStrictEffects && createRootStrictEffectsByDefault) {
-      mode |= StrictLegacyMode | StrictEffectsMode;
-    }
-    if (
-      // 我们只使用这个标志进行仓库测试以检查两种行为。
-      // TODO: 翻转这个标志并将其重命名为类似 "forceConcurrentByDefaultForTesting"
-      !enableSyncDefaultUpdates ||
-      // 仅用于内部实验。
-      (allowConcurrentByDefault && concurrentUpdatesByDefaultOverride)
-    ) {
-      mode |= ConcurrentUpdatesByDefaultMode;
-    }
-  } else {
-    mode = NoMode;
+    mode = NoMode; //3，不是 strict mode
   }
 
   if (enableProfilerTimer && isDevToolsPresent) {
@@ -456,7 +397,7 @@ export function createHostRootFiber(
     // 而不会让树中的某些节点具有空的基础时间。
     mode |= ProfileMode;
   }
-
+  // HostRoot = 3 常量
   return createFiber(HostRoot, null, null, mode);
 }
 

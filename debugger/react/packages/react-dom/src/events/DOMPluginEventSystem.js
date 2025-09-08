@@ -175,7 +175,7 @@ function extractEvents(
   }
 }
 
-// List of events that need to be individually attached to media elements.
+//需要单独附加到媒体元素的事件列表。
 export const mediaEventTypes: Array<DOMEventName> = [
   'abort',
   'canplay',
@@ -203,9 +203,9 @@ export const mediaEventTypes: Array<DOMEventName> = [
   'waiting',
 ];
 
-// We should not delegate these events to the container, but rather
-// set them on the actual target element itself. This is primarily
-// because these events do not consistently bubble in the DOM.
+//我们不应该把这些事件委托给容器，而应该
+//在实际的目标元素本身上设置它们。这主要是
+//因为这些事件不会始终在DOM中冒泡。
 export const nonDelegatedEvents: Set<DOMEventName> = new Set([
   'cancel',
   'close',
@@ -213,10 +213,10 @@ export const nonDelegatedEvents: Set<DOMEventName> = new Set([
   'load',
   'scroll',
   'toggle',
-  // In order to reduce bytes, we insert the above array of media events
-  // into this Set. Note: the "error" event isn't an exclusive media event,
-  // and can occur on other elements too. Rather than duplicate that event,
-  // we just take it from the media events array.
+  //为了减少字节，我们插入上述媒体事件数组
+  //进入这个集合。注意：“error”事件不是一个独家媒体事件，
+  //也可以发生在其他元素上。而不是重复那个事件，
+  //我们从媒体事件数组中获取它。
   ...mediaEventTypes,
 ]);
 
@@ -328,22 +328,14 @@ export function listenToNativeEvent(
   isCapturePhaseListener: boolean,
   target: EventTarget,
 ): void {
-  if (__DEV__) {
-    if (nonDelegatedEvents.has(domEventName) && !isCapturePhaseListener) {
-      console.error(
-        'Did not expect a listenToNativeEvent() call for "%s" in the bubble phase. ' +
-          'This is a bug in React. Please file an issue.',
-        domEventName,
-      );
-    }
-  }
-
   let eventSystemFlags = 0;
   if (isCapturePhaseListener) {
+    // 下面等价于 eventSystemFlags = eventSystemFlags | IS_CAPTURE_PHASE;
+    // 添加捕获阶段标志
     eventSystemFlags |= IS_CAPTURE_PHASE;
   }
   addTrappedEventListener(
-    target,
+    target, // root，绑定在了root上，selectionchange是document
     domEventName,
     eventSystemFlags,
     isCapturePhaseListener,
@@ -387,24 +379,26 @@ export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
   if (!(rootContainerElement: any)[listeningMarker]) {
     (rootContainerElement: any)[listeningMarker] = true;
     allNativeEvents.forEach(domEventName => {
-      // We handle selectionchange separately because it
-      // doesn't bubble and needs to be on the document.
+      // selectionchange 没冒泡，要单纯处理，在 document 上
       if (domEventName !== 'selectionchange') {
         if (!nonDelegatedEvents.has(domEventName)) {
+          // 这里的false 表示正常冒泡，下面的true是捕获
           listenToNativeEvent(domEventName, false, rootContainerElement);
         }
         listenToNativeEvent(domEventName, true, rootContainerElement);
       }
     });
+    // rootContainerElement.nodeType = 1，不是 document,ownerDocument就是document
     const ownerDocument =
       (rootContainerElement: any).nodeType === DOCUMENT_NODE
         ? rootContainerElement
         : (rootContainerElement: any).ownerDocument;
     if (ownerDocument !== null) {
-      // The selectionchange event also needs deduplication
-      // but it is attached to the document.
+      // selectionchange事件也需要重复数据删除
+      //但是它是附加到文档的。
       if (!(ownerDocument: any)[listeningMarker]) {
         (ownerDocument: any)[listeningMarker] = true;
+        // 也就是说 selectionchange 要在ownerDocument上处理，这玩意编辑器会用，只能在document上监听
         listenToNativeEvent('selectionchange', false, ownerDocument);
       }
     }
@@ -423,15 +417,15 @@ function addTrappedEventListener(
     domEventName,
     eventSystemFlags,
   );
-  // If passive option is not supported, then the event will be
-  // active and not passive.
+  //如果不支持被动选项，则事件将被触发
+  //主动而非被动。
   let isPassiveListener = undefined;
   if (passiveBrowserEventsSupported) {
-    // Browsers introduced an intervention, making these events
-    // passive by default on document. React doesn't bind them
-    // to document anymore, but changing this now would undo
-    // the performance wins from the change. So we emulate
-    // the existing behavior manually on the roots now.
+    //浏览器引入了一个干预，使这些事件
+    //默认为被动文件。React不会绑定它们
+    //现在更改将撤销
+    //性能从改变中获益。所以我们模仿
+    //现在在root上手动执行现有行为。
     // https://github.com/facebook/react/issues/19651
     if (
       domEventName === 'touchstart' ||
@@ -448,17 +442,17 @@ function addTrappedEventListener(
       : targetContainer;
 
   let unsubscribeListener;
-  // When legacyFBSupport is enabled, it's for when we
-  // want to add a one time event listener to a container.
-  // This should only be used with enableLegacyFBSupport
-  // due to requirement to provide compatibility with
-  // internal FB www event tooling. This works by removing
-  // the event listener as soon as it is invoked. We could
-  // also attempt to use the {once: true} param on
-  // addEventListener, but that requires support and some
-  // browsers do not support this today, and given this is
-  // to support legacy code patterns, it's likely they'll
-  // need support for such browsers.
+  //当legacyFBSupport被启用时，当我们
+  //为容器添加一次性事件监听器
+  //只能使用enableLegacyFBSupport
+  //由于需要提供兼容性
+  //内部FB www事件工具。它的工作原理是
+  //事件监听器被调用后立即返回。我们可以
+  //也尝试使用{once: true}参数
+  // addEventListener，但这需要支持和一些
+  //当前浏览器不支持此功能，因此
+  //支持遗留代码模式，它们很可能会
+  //需要支持这样的浏览器。
   if (enableLegacyFBSupport && isDeferredListenerForLegacyFBSupport) {
     const originalListener = listener;
     listener = function(...p) {
@@ -471,7 +465,7 @@ function addTrappedEventListener(
       return originalListener.apply(this, p);
     };
   }
-  // TODO: There are too many combinations here. Consolidate them.
+  // TODO: 这里的组合太多了。巩固它们。
   if (isCapturePhaseListener) {
     if (isPassiveListener !== undefined) {
       unsubscribeListener = addEventCaptureListenerWithPassiveFlag(
