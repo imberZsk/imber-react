@@ -330,7 +330,8 @@ export function listenToNativeEvent(
 ): void {
   let eventSystemFlags = 0;
   if (isCapturePhaseListener) {
-    // 下面等价于 eventSystemFlags = eventSystemFlags | IS_CAPTURE_PHASE;
+    // const IS_CAPTURE_PHASE = 1 << 2;
+    // 下面｜=等价于 eventSystemFlags = eventSystemFlags | IS_CAPTURE_PHASE;
     // 添加捕获阶段标志
     eventSystemFlags |= IS_CAPTURE_PHASE;
   }
@@ -375,9 +376,11 @@ const listeningMarker =
     .toString(36)
     .slice(2);
 
+// createRoot->createContainer->listenToAllSupportedEvents（#root）
 export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
   if (!(rootContainerElement: any)[listeningMarker]) {
     (rootContainerElement: any)[listeningMarker] = true;
+    // 所有事件便利绑定
     allNativeEvents.forEach(domEventName => {
       // selectionchange 没冒泡，要单纯处理，在 document 上
       if (domEventName !== 'selectionchange') {
@@ -412,20 +415,16 @@ function addTrappedEventListener(
   isCapturePhaseListener: boolean,
   isDeferredListenerForLegacyFBSupport?: boolean,
 ) {
+  // 带有优先级的事件监听器
   let listener = createEventListenerWrapperWithPriority(
-    targetContainer,
-    domEventName,
-    eventSystemFlags,
+    targetContainer, //#root
+    domEventName, //事件名
+    eventSystemFlags, //捕获阶段标识
   );
-  //如果不支持被动选项，则事件将被触发
-  //主动而非被动。
+  //如果不支持被动选项，则事件将被触发主动而非被动。
   let isPassiveListener = undefined;
   if (passiveBrowserEventsSupported) {
-    //浏览器引入了一个干预，使这些事件
-    //默认为被动文件。React不会绑定它们
-    //现在更改将撤销
-    //性能从改变中获益。所以我们模仿
-    //现在在root上手动执行现有行为。
+    // 自动给这些事件加passive优化性能
     // https://github.com/facebook/react/issues/19651
     if (
       domEventName === 'touchstart' ||
@@ -442,17 +441,8 @@ function addTrappedEventListener(
       : targetContainer;
 
   let unsubscribeListener;
-  //当legacyFBSupport被启用时，当我们
-  //为容器添加一次性事件监听器
-  //只能使用enableLegacyFBSupport
-  //由于需要提供兼容性
-  //内部FB www事件工具。它的工作原理是
-  //事件监听器被调用后立即返回。我们可以
-  //也尝试使用{once: true}参数
-  // addEventListener，但这需要支持和一些
-  //当前浏览器不支持此功能，因此
-  //支持遗留代码模式，它们很可能会
-  //需要支持这样的浏览器。
+
+  // 兼容性代码，无关紧要。不用看
   if (enableLegacyFBSupport && isDeferredListenerForLegacyFBSupport) {
     const originalListener = listener;
     listener = function(...p) {
@@ -465,8 +455,10 @@ function addTrappedEventListener(
       return originalListener.apply(this, p);
     };
   }
-  // TODO: 这里的组合太多了。巩固它们。
+
+  // 根据 isCapturePhaseListener 参数决定在捕获阶段还是冒泡阶段监听事件
   if (isCapturePhaseListener) {
+    // 捕获阶段
     if (isPassiveListener !== undefined) {
       unsubscribeListener = addEventCaptureListenerWithPassiveFlag(
         targetContainer,
@@ -482,6 +474,7 @@ function addTrappedEventListener(
       );
     }
   } else {
+    // 冒泡阶段 添加passive
     if (isPassiveListener !== undefined) {
       unsubscribeListener = addEventBubbleListenerWithPassiveFlag(
         targetContainer,
@@ -490,6 +483,7 @@ function addTrappedEventListener(
         isPassiveListener,
       );
     } else {
+      // 冒泡阶段，没有passive
       unsubscribeListener = addEventBubbleListener(
         targetContainer,
         domEventName,

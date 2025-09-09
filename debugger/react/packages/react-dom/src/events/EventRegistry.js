@@ -36,6 +36,7 @@ export function registerTwoPhaseEvent(
   registrationName: string,
   dependencies: Array<DOMEventName>,
 ): void {
+  debugger;
   registerDirectEvent(registrationName, dependencies);
   registerDirectEvent(registrationName + 'Capture', dependencies);
 }
@@ -44,27 +45,8 @@ export function registerDirectEvent(
   registrationName: string,
   dependencies: Array<DOMEventName>,
 ) {
-  if (__DEV__) {
-    if (registrationNameDependencies[registrationName]) {
-      console.error(
-        'EventRegistry: More than one plugin attempted to publish the same ' +
-          'registration name, `%s`.',
-        registrationName,
-      );
-    }
-  }
-
   registrationNameDependencies[registrationName] = dependencies;
-
-  if (__DEV__) {
-    const lowerCasedName = registrationName.toLowerCase();
-    possibleRegistrationNames[lowerCasedName] = registrationName;
-
-    if (registrationName === 'onDoubleClick') {
-      possibleRegistrationNames.ondblclick = registrationName;
-    }
-  }
-
+  debugger;
   for (let i = 0; i < dependencies.length; i++) {
     allNativeEvents.add(dependencies[i]);
   }

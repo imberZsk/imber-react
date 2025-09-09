@@ -33,6 +33,7 @@ export const topLevelEventsToReactNames: Map<
 // Exceptions that don't match this convention are listed separately.
 //
 // prettier-ignore
+// 所有事件
 const simpleEventPluginEvents = [
   'abort',
   'auxClick',
