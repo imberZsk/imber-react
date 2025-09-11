@@ -101,12 +101,10 @@ function extractEvents(
   eventSystemFlags: EventSystemFlags,
   targetContainer: EventTarget,
 ) {
-  // TODO: we should remove the concept of a "SimpleEventPlugin".
-  // This is the basic functionality of the event system. All
-  // the other plugins are essentially polyfills. So the plugin
-  // should probably be inlined somewhere and have its logic
-  // be core the to event system. This would potentially allow
-  // us to ship builds of React without the polyfilled plugins below.
+  // 1. 提取简单事件（基础事件插件）
+  // 处理基本的DOM事件，如click、input、change等
+  // 这是事件系统的核心功能，所有其他插件本质上都是polyfill
+  // TODO: 应该移除"SimpleEventPlugin"的概念，将其逻辑内联到事件系统核心中
   SimpleEventPlugin.extractEvents(
     dispatchQueue,
     domEventName,
@@ -116,26 +114,22 @@ function extractEvents(
     eventSystemFlags,
     targetContainer,
   );
+
+  // 2. 检查是否应该处理polyfill插件
+  // 根据事件系统标志决定是否需要处理额外的polyfill事件插件
   const shouldProcessPolyfillPlugins =
     (eventSystemFlags & SHOULD_NOT_PROCESS_POLYFILL_EVENT_PLUGINS) === 0;
-  // We don't process these events unless we are in the
-  // event's native "bubble" phase, which means that we're
-  // not in the capture phase. That's because we emulate
-  // the capture phase here still. This is a trade-off,
-  // because in an ideal world we would not emulate and use
-  // the phases properly, like we do with the SimpleEvent
-  // plugin. However, the plugins below either expect
-  // emulation (EnterLeave) or use state localized to that
-  // plugin (BeforeInput, Change, Select). The state in
-  // these modules complicates things, as you'll essentially
-  // get the case where the capture phase event might change
-  // state, only for the following bubble event to come in
-  // later and not trigger anything as the state now
-  // invalidates the heuristics of the event plugin. We
-  // could alter all these plugins to work in such ways, but
-  // that might cause other unknown side-effects that we
-  // can't foresee right now.
+
+  // 3. 处理polyfill事件插件（仅在冒泡阶段处理）
+  // 我们只在事件的原生"冒泡"阶段处理这些事件，这意味着我们不在捕获阶段处理
+  // 这是因为我们仍然在这里模拟捕获阶段。这是一个权衡：
+  // - 理想情况下，我们不应该模拟，而是像SimpleEvent插件那样正确使用阶段
+  // - 但是下面的插件要么期望模拟（EnterLeave），要么使用该插件本地化的状态（BeforeInput、Change、Select）
+  // - 这些模块中的状态使事情复杂化，因为捕获阶段事件可能会改变状态，
+  //   然后后续的冒泡事件进来时，由于状态现在使事件插件的启发式无效，可能不会触发任何东西
+  // - 我们可以改变所有这些插件以这种方式工作，但这可能会造成我们现在无法预见的其他未知副作用
   if (shouldProcessPolyfillPlugins) {
+    // 3.1 处理鼠标进入/离开事件（onMouseEnter、onMouseLeave等）
     EnterLeaveEventPlugin.extractEvents(
       dispatchQueue,
       domEventName,
@@ -145,6 +139,8 @@ function extractEvents(
       eventSystemFlags,
       targetContainer,
     );
+
+    // 3.2 处理表单变化事件（onChange等）
     ChangeEventPlugin.extractEvents(
       dispatchQueue,
       domEventName,
@@ -154,6 +150,8 @@ function extractEvents(
       eventSystemFlags,
       targetContainer,
     );
+
+    // 3.3 处理选择事件（onSelect等）
     SelectEventPlugin.extractEvents(
       dispatchQueue,
       domEventName,
@@ -163,6 +161,8 @@ function extractEvents(
       eventSystemFlags,
       targetContainer,
     );
+
+    // 3.4 处理输入前事件（onBeforeInput等）
     BeforeInputEventPlugin.extractEvents(
       dispatchQueue,
       domEventName,
@@ -279,8 +279,15 @@ function dispatchEventsForPlugins(
   targetInst: null | Fiber,
   targetContainer: EventTarget,
 ): void {
+  // 1. 获取原生事件的目标DOM节点
   const nativeEventTarget = getEventTarget(nativeEvent);
+
+  // 2. 创建事件分发队列，用于存储待处理的事件
   const dispatchQueue: DispatchQueue = [];
+
+  // 3. 提取事件：从原生事件中提取React合成事件，并收集所有需要触发的监听器
+  // 这个过程会遍历fiber树，找到所有匹配的事件监听器（包括捕获和冒泡阶段）
+  // extractEvents 不是提取事件本身，而是提取事件监听器并创建合成事件对象，然后填充到 dispatchQueue 队列中。
   extractEvents(
     dispatchQueue,
     domEventName,
@@ -290,6 +297,9 @@ function dispatchEventsForPlugins(
     eventSystemFlags,
     targetContainer,
   );
+
+  // 4. 处理分发队列：按正确的顺序执行所有收集到的事件监听器
+  // 先执行捕获阶段的监听器，再执行冒泡阶段的监听器
   processDispatchQueue(dispatchQueue, eventSystemFlags);
 }
 
@@ -528,59 +538,69 @@ export function dispatchEventForPluginEventSystem(
   targetInst: null | Fiber,
   targetContainer: EventTarget,
 ): void {
+  // 1. 初始化祖先实例为事件目标实例
   let ancestorInst = targetInst;
+
+  // 2. 检查是否需要处理事件委托和根容器匹配逻辑
   if (
     (eventSystemFlags & IS_EVENT_HANDLE_NON_MANAGED_NODE) === 0 &&
     (eventSystemFlags & IS_NON_DELEGATED) === 0
   ) {
+    // 2.1 将目标容器转换为DOM节点
     const targetContainerNode = ((targetContainer: any): Node);
 
-    // If we are using the legacy FB support flag, we
-    // defer the event to the null with a one
-    // time event listener so we can defer the event.
+    // 2.2 处理Facebook遗留支持的特殊点击事件逻辑
     if (
       enableLegacyFBSupport &&
-      // If our event flags match the required flags for entering
-      // FB legacy mode and we are processing the "click" event,
-      // then we can defer the event to the "document", to allow
-      // for legacy FB support, where the expected behavior was to
-      // match React < 16 behavior of delegated clicks to the doc.
+      // 如果事件标志匹配进入FB遗留模式所需的标志，且正在处理"click"事件
+      // 那么我们可以将事件延迟到"document"，以支持遗留FB行为
+      // 期望的行为是匹配React < 16版本的委托点击到文档的行为
       domEventName === 'click' &&
       (eventSystemFlags & SHOULD_NOT_DEFER_CLICK_FOR_FB_SUPPORT_MODE) === 0 &&
       !isReplayingEvent(nativeEvent)
     ) {
+      // 2.2.1 将点击事件延迟到文档以支持遗留FB支持
       deferClickToDocumentForLegacyFBSupport(domEventName, targetContainer);
       return;
     }
+
+    // 2.3 如果目标实例不为空，需要确定正确的祖先实例
     if (targetInst !== null) {
-      // The below logic attempts to work out if we need to change
-      // the target fiber to a different ancestor. We had similar logic
-      // in the legacy event system, except the big difference between
-      // systems is that the modern event system now has an event listener
-      // attached to each React Root and React Portal Root. Together,
-      // the DOM nodes representing these roots are the "rootContainer".
-      // To figure out which ancestor instance we should use, we traverse
-      // up the fiber tree from the target instance and attempt to find
-      // root boundaries that match that of our current "rootContainer".
-      // If we find that "rootContainer", we find the parent fiber
-      // sub-tree for that root and make that our ancestor instance.
+      // 下面的逻辑尝试确定是否需要将目标fiber更改为不同的祖先
+      // 我们在遗留事件系统中有类似的逻辑，但两个系统之间的主要区别是
+      // 现代事件系统现在在每个React Root和React Portal Root上都有事件监听器
+      // 代表这些根的DOM节点是"rootContainer"
+      // 为了确定应该使用哪个祖先实例，我们从目标实例向上遍历fiber树
+      // 并尝试找到与当前"rootContainer"匹配的根边界
+      // 如果找到该"rootContainer"，我们找到该根的父fiber子树并将其作为祖先实例
       let node = targetInst;
 
+      // 2.3.1 主循环：向上遍历fiber树寻找正确的根容器
       mainLoop: while (true) {
+        // 2.3.2 如果节点为空，直接返回
         if (node === null) {
           return;
         }
+
+        // 2.3.3 获取节点标签
         const nodeTag = node.tag;
+
+        // 2.3.4 检查是否是HostRoot或HostPortal
         if (nodeTag === HostRoot || nodeTag === HostPortal) {
+          // 2.3.5 获取容器的容器信息
           let container = node.stateNode.containerInfo;
+
+          // 2.3.6 检查是否匹配目标根容器
           if (isMatchingRootContainer(container, targetContainerNode)) {
             break;
           }
+
+          // 2.3.7 处理Portal的特殊情况
           if (nodeTag === HostPortal) {
-            // The target is a portal, but it's not the rootContainer we're looking for.
-            // Normally portals handle their own events all the way down to the root.
-            // So we should be able to stop now. However, we don't know if this portal
-            // was part of *our* root.
+            // 目标是portal，但不是我们要找的rootContainer
+            // 通常portal会处理自己的事件一直到根
+            // 所以我们应该能够现在停止。但是，我们不知道这个portal
+            // 是否是*我们的*根的一部分
             let grandNode = node.return;
             while (grandNode !== null) {
               const grandTag = grandNode.tag;
@@ -589,20 +609,18 @@ export function dispatchEventForPluginEventSystem(
                 if (
                   isMatchingRootContainer(grandContainer, targetContainerNode)
                 ) {
-                  // This is the rootContainer we're looking for and we found it as
-                  // a parent of the Portal. That means we can ignore it because the
-                  // Portal will bubble through to us.
+                  // 这是我们正在寻找的rootContainer，我们将其作为Portal的父级找到
+                  // 这意味着我们可以忽略它，因为Portal会冒泡到我们这里
                   return;
                 }
               }
               grandNode = grandNode.return;
             }
           }
-          // Now we need to find it's corresponding host fiber in the other
-          // tree. To do this we can use getClosestInstanceFromNode, but we
-          // need to validate that the fiber is a host instance, otherwise
-          // we need to traverse up through the DOM till we find the correct
-          // node that is from the other tree.
+
+          // 2.3.8 现在我们需要在另一个树中找到对应的host fiber
+          // 为此我们可以使用getClosestInstanceFromNode，但我们需要验证
+          // fiber是host实例，否则我们需要向上遍历DOM直到找到正确的节点
           while (container !== null) {
             const parentNode = getClosestInstanceFromNode(container);
             if (parentNode === null) {
@@ -610,17 +628,21 @@ export function dispatchEventForPluginEventSystem(
             }
             const parentTag = parentNode.tag;
             if (parentTag === HostComponent || parentTag === HostText) {
+              // 2.3.9 找到匹配的host组件，更新节点和祖先实例
               node = ancestorInst = parentNode;
               continue mainLoop;
             }
+            // 2.3.10 继续向上遍历DOM树
             container = container.parentNode;
           }
         }
+        // 2.3.11 向上遍历fiber树
         node = node.return;
       }
     }
   }
 
+  // 3. 在批处理更新中分发事件给插件系统
   batchedUpdates(() =>
     dispatchEventsForPlugins(
       domEventName,
@@ -652,27 +674,31 @@ export function accumulateSinglePhaseListeners(
   accumulateTargetOnly: boolean,
   nativeEvent: AnyNativeEvent,
 ): Array<DispatchListener> {
+  // 1. 确定React事件名称（根据是否在捕获阶段）
   const captureName = reactName !== null ? reactName + 'Capture' : null;
   const reactEventName = inCapturePhase ? captureName : reactName;
   let listeners: Array<DispatchListener> = [];
 
-  let instance = targetFiber;
-  let lastHostComponent = null;
+  // 2. 初始化遍历变量
+  let instance = targetFiber; // 当前遍历的fiber节点
+  let lastHostComponent = null; // 最后一个host组件（DOM节点）
 
-  // Accumulate all instances and listeners via the target -> root path.
+  // 3. 从目标节点向根节点遍历，收集所有事件监听器
   while (instance !== null) {
     const {stateNode, tag} = instance;
-    // Handle listeners that are on HostComponents (i.e. <div>)
+
+    // 3.1 处理HostComponent上的监听器（如<div>、<button>等DOM元素）
     if (tag === HostComponent && stateNode !== null) {
       lastHostComponent = stateNode;
 
-      // createEventHandle listeners
+      // 3.1.1 处理createEventHandle API创建的监听器
       if (enableCreateEventHandleAPI) {
         const eventHandlerListeners = getEventHandlerListeners(
           lastHostComponent,
         );
         if (eventHandlerListeners !== null) {
           eventHandlerListeners.forEach(entry => {
+            // 检查事件类型和阶段是否匹配
             if (
               entry.type === nativeEventType &&
               entry.capture === inCapturePhase
@@ -689,7 +715,7 @@ export function accumulateSinglePhaseListeners(
         }
       }
 
-      // Standard React on* listeners, i.e. onClick or onClickCapture
+      // 3.1.2 处理标准的React事件监听器（如onClick、onClickCapture）
       if (reactEventName !== null) {
         const listener = getListener(instance, reactEventName);
         if (listener != null) {
@@ -699,13 +725,14 @@ export function accumulateSinglePhaseListeners(
         }
       }
     } else if (
+      // 3.2 处理Scope组件上的监听器
       enableCreateEventHandleAPI &&
       enableScopeAPI &&
       tag === ScopeComponent &&
       lastHostComponent !== null &&
       stateNode !== null
     ) {
-      // Scopes
+      // 3.2.1 处理Scope组件的事件监听器
       const reactScopeInstance = stateNode;
       const eventHandlerListeners = getEventHandlerListeners(
         reactScopeInstance,
@@ -727,18 +754,16 @@ export function accumulateSinglePhaseListeners(
         });
       }
     }
-    // If we are only accumulating events for the target, then we don't
-    // continue to propagate through the React fiber tree to find other
-    // listeners.
+
+    // 3.3 如果只需要收集目标节点的事件，则停止遍历
     if (accumulateTargetOnly) {
       break;
     }
-    // If we are processing the onBeforeBlur event, then we need to take
-    // into consideration that part of the React tree might have been hidden
-    // or deleted (as we're invoking this event during commit). We can find
-    // this out by checking if intercept fiber set on the event matches the
-    // current instance fiber. In which case, we should clear all existing
-    // listeners.
+
+    // 3.4 处理beforeblur事件的特殊情况
+    // 如果正在处理onBeforeBlur事件，需要考虑React树的一部分可能已被隐藏或删除
+    // （因为我们在commit阶段调用此事件）。我们可以通过检查事件上设置的intercept fiber
+    // 是否与当前实例fiber匹配来发现这一点。在这种情况下，我们应该清除所有现有的监听器
     if (enableCreateEventHandleAPI && nativeEvent.type === 'beforeblur') {
       // $FlowFixMe: internal field
       const detachedInterceptFiber = nativeEvent._detachedInterceptFiber;
@@ -747,11 +772,16 @@ export function accumulateSinglePhaseListeners(
         (detachedInterceptFiber === instance ||
           detachedInterceptFiber === instance.alternate)
       ) {
+        // 3.4.1 如果检测到分离的fiber，清空所有监听器
         listeners = [];
       }
     }
+
+    // 3.5 向上遍历到父fiber节点
     instance = instance.return;
   }
+
+  // 4. 返回收集到的所有监听器
   return listeners;
 }
 

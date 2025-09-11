@@ -45,16 +45,25 @@ function finishEventHandler() {
 }
 
 export function batchedUpdates(fn, a, b) {
+  // 1. 检查是否已经在事件处理器内部（嵌套批处理检查）
   if (isInsideEventHandler) {
-    // If we are currently inside another batch, we need to wait until it
-    // fully completes before restoring state.
+    // 1.1 如果当前已经在另一个批处理内部，我们需要等待它完全完成后再恢复状态
+    // 这种情况下直接执行函数，不进行额外的批处理包装
     return fn(a, b);
   }
+
+  // 2. 标记当前正在事件处理器内部，防止嵌套批处理
   isInsideEventHandler = true;
+
   try {
+    // 3. 执行实际的批处理更新实现
+    // 这会将多个状态更新合并到一个批次中，提高性能
     return batchedUpdatesImpl(fn, a, b);
   } finally {
+    // 4. 无论成功还是失败，都要清理状态
+    // 4.1 重置事件处理器内部标志
     isInsideEventHandler = false;
+    // 4.2 完成事件处理器，处理受控组件的状态恢复
     finishEventHandler();
   }
 }

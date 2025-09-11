@@ -97,7 +97,7 @@ export function createEventListenerWrapperWithPriority(
     case ContinuousEventPriority: // 连续事件优先级
       listenerWrapper = dispatchContinuousEvent;
       break;
-    case DefaultEventPriority:
+    case DefaultEventPriority: // 默认优先级
     default:
       // 默认事件优先级
       listenerWrapper = dispatchEvent;
@@ -270,13 +270,17 @@ function dispatchEventWithEnableCapturePhaseSelectiveHydrationWithoutDiscreteEve
   targetContainer: EventTarget,
   nativeEvent: AnyNativeEvent,
 ) {
+  // 1. 检查事件是否被阻塞（比如被Suspense边界或脱水状态阻塞）
   let blockedOn = findInstanceBlockingEvent(
     domEventName,
     eventSystemFlags,
     targetContainer,
     nativeEvent,
   );
+
+  // 2. 如果事件未被阻塞，直接分发事件
   if (blockedOn === null) {
+    // 2.1 通过插件事件系统分发事件
     dispatchEventForPluginEventSystem(
       domEventName,
       eventSystemFlags,
@@ -284,10 +288,12 @@ function dispatchEventWithEnableCapturePhaseSelectiveHydrationWithoutDiscreteEve
       return_targetInst,
       targetContainer,
     );
+    // 2.2 清理连续事件状态（如果适用）
     clearIfContinuousEvent(domEventName, nativeEvent);
     return;
   }
 
+  // 3. 尝试将连续事件加入队列（如果事件被阻塞且是连续事件）
   if (
     queueIfContinuousEvent(
       blockedOn,
@@ -297,28 +303,37 @@ function dispatchEventWithEnableCapturePhaseSelectiveHydrationWithoutDiscreteEve
       nativeEvent,
     )
   ) {
+    // 3.1 如果成功加入队列，停止事件传播并返回
     nativeEvent.stopPropagation();
     return;
   }
-  // We need to clear only if we didn't queue because
-  // queueing is accumulative.
+
+  // 4. 清理连续事件状态（只有在没有加入队列时才清理，因为队列是累积的）
   clearIfContinuousEvent(domEventName, nativeEvent);
 
+  // 5. 处理捕获阶段的离散事件水合场景
   if (
     eventSystemFlags & IS_CAPTURE_PHASE &&
     isDiscreteEventThatRequiresHydration(domEventName)
   ) {
+    // 5.1 循环尝试同步水合直到事件不再被阻塞
     while (blockedOn !== null) {
+      // 5.2 获取阻塞节点的fiber实例
       const fiber = getInstanceFromNode(blockedOn);
       if (fiber !== null) {
+        // 5.3 尝试同步水合该fiber节点
         attemptSynchronousHydration(fiber);
       }
+
+      // 5.4 重新检查事件是否还被阻塞
       const nextBlockedOn = findInstanceBlockingEvent(
         domEventName,
         eventSystemFlags,
         targetContainer,
         nativeEvent,
       );
+
+      // 5.5 如果不再被阻塞，分发事件
       if (nextBlockedOn === null) {
         dispatchEventForPluginEventSystem(
           domEventName,
@@ -328,11 +343,17 @@ function dispatchEventWithEnableCapturePhaseSelectiveHydrationWithoutDiscreteEve
           targetContainer,
         );
       }
+
+      // 5.6 如果阻塞状态没有改变，跳出循环避免无限循环
       if (nextBlockedOn === blockedOn) {
         break;
       }
+
+      // 5.7 更新阻塞状态，继续下一轮尝试
       blockedOn = nextBlockedOn;
     }
+
+    // 5.8 如果最终仍然被阻塞，停止事件传播
     if (blockedOn !== null) {
       nativeEvent.stopPropagation();
     }
