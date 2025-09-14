@@ -70,6 +70,7 @@ function extractEvents(
 
   // 3. 根据DOM事件名称确定对应的合成事件类型和构造函数
   switch (domEventName) {
+    //region
     case 'keypress':
       // 3.1 键盘事件特殊处理：Firefox会为功能键也创建keypress事件
       // 这里移除不需要的keypress事件。Enter键既是可打印的也是不可打印的
@@ -95,7 +96,7 @@ function extractEvents(
     case 'afterblur':
       SyntheticEventCtor = SyntheticFocusEvent; // 焦点相关事件
       break;
-
+    //endregion
     case 'click':
       // 3.2 鼠标点击事件特殊处理：Firefox在右键点击时也会创建click事件
       // 这里移除不需要的右键点击事件
@@ -228,7 +229,7 @@ function extractEvents(
     );
 
     if (listeners.length > 0) {
-      // 6.3 懒创建合成事件对象
+      // 6.3 懒创建合成事件对象，就是event.target的e
       const event = new SyntheticEventCtor(
         reactName, // onClick
         reactEventType, // click

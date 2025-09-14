@@ -236,23 +236,43 @@ function processDispatchQueueItemsInOrder(
   dispatchListeners: Array<DispatchListener>,
   inCapturePhase: boolean,
 ): void {
+  // 1. 用于跟踪上一个实例，避免重复执行同一实例的监听器
   let previousInstance;
+
   if (inCapturePhase) {
+    // 2. 捕获阶段：从后往前遍历监听器（从根到目标）
     for (let i = dispatchListeners.length - 1; i >= 0; i--) {
+      // 2.1 解构获取当前监听器的信息
       const {instance, currentTarget, listener} = dispatchListeners[i];
+
+      // 2.2 检查事件传播是否被停止
+      // 如果当前实例与上一个实例不同，且事件传播已被停止，则停止执行
       if (instance !== previousInstance && event.isPropagationStopped()) {
         return;
       }
+
+      // 2.3 执行当前监听器
       executeDispatch(event, listener, currentTarget);
+
+      // 2.4 更新上一个实例引用
       previousInstance = instance;
     }
   } else {
+    // 3. 冒泡阶段：从前往后遍历监听器（从目标到根）
     for (let i = 0; i < dispatchListeners.length; i++) {
+      // 3.1 解构获取当前监听器的信息
       const {instance, currentTarget, listener} = dispatchListeners[i];
+
+      // 3.2 检查事件传播是否被停止
+      // 如果当前实例与上一个实例不同，且事件传播已被停止，则停止执行
       if (instance !== previousInstance && event.isPropagationStopped()) {
         return;
       }
+
+      // 3.3 执行当前监听器
       executeDispatch(event, listener, currentTarget);
+
+      // 3.4 更新上一个实例引用
       previousInstance = instance;
     }
   }
@@ -262,13 +282,24 @@ export function processDispatchQueue(
   dispatchQueue: DispatchQueue,
   eventSystemFlags: EventSystemFlags,
 ): void {
+  // 1. 检查是否在捕获阶段
   const inCapturePhase = (eventSystemFlags & IS_CAPTURE_PHASE) !== 0;
+
+  // 2. 遍历分发队列中的每个事件
   for (let i = 0; i < dispatchQueue.length; i++) {
+    // 2.1 解构获取事件对象和监听器列表
     const {event, listeners} = dispatchQueue[i];
+
+    // 2.2 按正确顺序处理事件和监听器
+    // 这里会执行所有收集到的事件监听器
     processDispatchQueueItemsInOrder(event, listeners, inCapturePhase);
-    //  event system doesn't use pooling.
+
+    // 2.3 现代事件系统不使用对象池
+    // 事件系统不使用对象池
   }
-  // This would be a good time to rethrow if any of the event handlers threw.
+
+  // 3. 重新抛出事件处理器中捕获的错误
+  // 如果任何事件处理器抛出错误，这是重新抛出它们的好时机
   rethrowCaughtError();
 }
 
@@ -666,6 +697,7 @@ function createDispatchListener(
   };
 }
 
+// 返回 listener 给到 dispatchQueue
 export function accumulateSinglePhaseListeners(
   targetFiber: Fiber | null,
   reactName: string | null,

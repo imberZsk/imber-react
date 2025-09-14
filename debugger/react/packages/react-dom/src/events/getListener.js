@@ -50,7 +50,7 @@ function shouldPreventMouseEvent(
  */
 export default function getListener(
   inst: Fiber,
-  registrationName: string,
+  registrationName: string, // React事件名称（如onClick）
 ): Function | null {
   const stateNode = inst.stateNode;
   if (stateNode === null) {
@@ -62,7 +62,7 @@ export default function getListener(
     // Work in progress.
     return null;
   }
-  const listener = props[registrationName];
+  const listener = props[registrationName]; // 获取事件监听器
   if (shouldPreventMouseEvent(registrationName, inst.type, props)) {
     return null;
   }
