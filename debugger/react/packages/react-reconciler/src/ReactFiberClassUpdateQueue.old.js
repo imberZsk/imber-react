@@ -221,53 +221,58 @@ export function createUpdate(eventTime: number, lane: Lane): Update<*> {
   return update;
 }
 
+/**
+ * 将更新加入队列的核心函数
+ * 这个函数负责将状态更新添加到Fiber节点的更新队列中。它是React状态更新机制的关键部分，
+ * 决定了更新是同步处理还是异步处理。
+ * @param {Fiber} fiber - 需要更新的Fiber节点
+ * @param {Update<State>} update - 要加入队列的更新对象，包含新的状态或状态更新函数
+ * @param {Lane} lane - 更新的优先级车道，用于并发调度
+ * @returns {FiberRoot | null} 返回Fiber根节点（用于标记更新）或null（如果Fiber已卸载）
+ */
 export function enqueueUpdate<State>(
   fiber: Fiber,
   update: Update<State>,
   lane: Lane,
 ): FiberRoot | null {
+  // 获取Fiber节点的更新队列
   const updateQueue = fiber.updateQueue;
   if (updateQueue === null) {
-    // Only occurs if the fiber has been unmounted.
+    // 只有在Fiber节点已经被卸载时才会发生
+    // 此时无法进行更新，直接返回null
     return null;
   }
 
+  // 获取共享的更新队列，这个队列在current和workInProgress之间共享
   const sharedQueue: SharedQueue<State> = (updateQueue: any).shared;
 
-  if (__DEV__) {
-    if (
-      currentlyProcessingQueue === sharedQueue &&
-      !didWarnUpdateInsideUpdate
-    ) {
-      console.error(
-        'An update (setState, replaceState, or forceUpdate) was scheduled ' +
-          'from inside an update function. Update functions should be pure, ' +
-          'with zero side-effects. Consider using componentDidUpdate or a ' +
-          'callback.',
-      );
-      didWarnUpdateInsideUpdate = true;
-    }
-  }
-
+  // 检查是否是不安全的渲染阶段更新
   if (isUnsafeClassRenderPhaseUpdate(fiber)) {
-    // This is an unsafe render phase update. Add directly to the update
-    // queue so we can process it immediately during the current render.
+    // 这是一个不安全的渲染阶段更新
+    // 在渲染过程中直接修改状态，需要立即处理以避免状态不一致
+
     const pending = sharedQueue.pending;
     if (pending === null) {
-      // This is the first update. Create a circular list.
+      // 这是第一个更新，创建一个循环链表
+      // 循环链表的结构：update -> update（自己指向自己）
       update.next = update;
     } else {
+      // 将新更新插入到循环链表中
+      // 新更新指向原来的第一个更新
       update.next = pending.next;
+      // 原来的最后一个更新指向新更新
       pending.next = update;
     }
+    // 更新pending指针指向最新的更新（循环链表的最后一个）
     sharedQueue.pending = update;
 
-    // Update the childLanes even though we're most likely already rendering
-    // this fiber. This is for backwards compatibility in the case where you
-    // update a different component during render phase than the one that is
-    // currently renderings (a pattern that is accompanied by a warning).
+    // 即使我们很可能已经在渲染这个Fiber，也要更新childLanes
+    // 这是为了向后兼容，当你在渲染阶段更新一个与当前正在渲染的组件不同的组件时
+    // （这种模式会伴随警告）
     return unsafe_markUpdateLaneFromFiberToRoot(fiber, lane);
   } else {
+    // 正常的并发更新情况
+    // 使用并发更新机制，将更新加入队列等待调度
     return enqueueConcurrentClassUpdate(fiber, sharedQueue, update, lane);
   }
 }

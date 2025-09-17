@@ -141,15 +141,41 @@ export function enqueueConcurrentHookUpdateAndEagerlyBailout<S, A>(
   enqueueUpdate(fiber, concurrentQueue, concurrentUpdate, lane);
 }
 
+/**
+ * 将类组件的更新加入并发更新队列
+ *
+ * 这个函数是类组件状态更新的入口点，负责将更新加入并发更新系统。
+ * 它处理类组件的setState调用，将更新排队等待调度，并返回对应的FiberRoot用于调度。
+ *
+ * @param {Fiber} fiber - 需要更新的Fiber节点（类组件）
+ * @param {ClassQueue<State>} queue - 类组件的更新队列
+ * @param {ClassUpdate<State>} update - 要加入队列的更新对象
+ * @param {Lane} lane - 更新的优先级车道
+ * @returns {FiberRoot | null} 返回对应的FiberRoot用于调度更新，如果找不到则返回null
+ */
 export function enqueueConcurrentClassUpdate<State>(
   fiber: Fiber,
   queue: ClassQueue<State>,
   update: ClassUpdate<State>,
   lane: Lane,
 ): FiberRoot | null {
+  // 将类组件的更新队列转换为并发更新队列格式
+  // 这是为了统一处理类组件和函数组件的更新机制
   const concurrentQueue: ConcurrentQueue = (queue: any);
+
+  // 将类组件的更新对象转换为并发更新格式
+  // 确保更新对象符合并发更新系统的要求
   const concurrentUpdate: ConcurrentUpdate = (update: any);
+
+  // 将更新加入并发更新队列
+  // 这个函数会处理并发更新的排队逻辑，包括：
+  // 1. 将更新添加到concurrentQueues数组中
+  // 2. 更新fiber的lanes字段
+  // 3. 处理alternate fiber的同步
   enqueueUpdate(fiber, concurrentQueue, concurrentUpdate, lane);
+
+  // 获取更新Fiber对应的根节点，用于后续的调度
+  // 这是React更新调度机制的关键步骤
   return getRootForUpdatedFiber(fiber);
 }
 
@@ -236,29 +262,45 @@ function markUpdateLaneFromFiberToRoot(
   }
 }
 
+/**
+ * 获取更新Fiber对应的根节点
+ *
+ * 当Fiber节点发生状态更新时，需要找到对应的FiberRoot来调度更新。
+ * 由于更新队列没有指向根节点的反向指针，只能通过向上遍历Fiber树来找到根节点。
+ *
+ * @param {Fiber} sourceFiber - 发生更新的源Fiber节点
+ * @returns {FiberRoot | null} 返回对应的FiberRoot，如果找不到则返回null
+ */
 function getRootForUpdatedFiber(sourceFiber: Fiber): FiberRoot | null {
-  // TODO: We will detect and infinite update loop and throw even if this fiber
-  // has already unmounted. This isn't really necessary but it happens to be the
-  // current behavior we've used for several release cycles. Consider not
-  // performing this check if the updated fiber already unmounted, since it's
-  // not possible for that to cause an infinite update loop.
+  // TODO: 即使这个Fiber已经卸载，我们也会检测无限更新循环并抛出错误。
+  // 这实际上不是必需的，但这恰好是我们几个发布周期以来一直使用的当前行为。
+  // 考虑在更新的Fiber已经卸载时不执行此检查，因为那不可能导致无限更新循环。
   throwIfInfiniteUpdateLoopDetected();
 
-  // When a setState happens, we must ensure the root is scheduled. Because
-  // update queues do not have a backpointer to the root, the only way to do
-  // this currently is to walk up the return path. This used to not be a big
-  // deal because we would have to walk up the return path to set
-  // the `childLanes`, anyway, but now those two traversals happen at
-  // different times.
-  // TODO: Consider adding a `root` backpointer on the update queue.
+  // 当setState发生时，我们必须确保根节点被调度。
+  // 因为更新队列没有指向根节点的反向指针，目前唯一的方法是向上遍历返回路径。
+  // 这以前不是大问题，因为无论如何我们都必须向上遍历返回路径来设置`childLanes`，
+  // 但现在这两个遍历发生在不同的时间。
+  // TODO: 考虑在更新队列上添加一个`root`反向指针。
+
+  // 检测源Fiber本身是否在未挂载的Fiber上更新
   detectUpdateOnUnmountedFiber(sourceFiber, sourceFiber);
+
+  // 从源Fiber开始向上遍历到根节点
   let node = sourceFiber;
   let parent = node.return;
+
+  // 向上遍历Fiber树，直到找到根节点
   while (parent !== null) {
+    // 检测每个父节点是否在未挂载的Fiber上更新
     detectUpdateOnUnmountedFiber(sourceFiber, node);
+    // 移动到父节点
     node = parent;
     parent = node.return;
   }
+
+  // 检查最终节点是否为HostRoot类型，如果是则返回其stateNode（FiberRoot）
+  // 否则返回null
   return node.tag === HostRoot ? (node.stateNode: FiberRoot) : null;
 }
 

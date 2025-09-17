@@ -318,54 +318,58 @@ export function createHydrationContainer(
   return root;
 }
 
+/**
+ * 更新容器 - React 渲染的核心入口函数
+ * 负责将新的 React 元素更新到指定的容器中，并调度渲染过程
+ *
+ * @param {ReactNodeList} element - 要渲染的 React 元素
+ * @param {OpaqueRoot} container - 目标容器（FiberRoot）
+ * @param {?React$Component} parentComponent - 父组件实例（可选）
+ * @param {?Function} callback - 渲染完成后的回调函数（可选）
+ * @returns {Lane} 返回更新优先级车道
+ */
 export function updateContainer(
   element: ReactNodeList,
   container: OpaqueRoot,
   parentComponent: ?React$Component<any, any>,
   callback: ?Function,
 ): Lane {
+  // 开发环境下，记录根节点调度信息
   if (__DEV__) {
     onScheduleRoot(container, element);
   }
+
+  // 获取容器的当前 Fiber 节点
   const current = container.current;
+  // 获取当前事件时间戳，用于优先级计算
   const eventTime = requestEventTime();
+  // 根据当前 Fiber 节点请求更新优先级车道
   const lane = requestUpdateLane(current);
 
+  // 如果启用了调度分析器，标记渲染调度
   if (enableSchedulingProfiler) {
     markRenderScheduled(lane);
   }
 
+  // 获取子树的上下文信息
   const context = getContextForSubtree(parentComponent);
+  // 设置容器的上下文
   if (container.context === null) {
     container.context = context;
   } else {
+    // 如果已有上下文，则设置为待处理上下文
     container.pendingContext = context;
   }
 
-  if (__DEV__) {
-    if (
-      ReactCurrentFiberIsRendering &&
-      ReactCurrentFiberCurrent !== null &&
-      !didWarnAboutNestedUpdates
-    ) {
-      didWarnAboutNestedUpdates = true;
-      console.error(
-        'Render methods should be a pure function of props and state; ' +
-          'triggering nested component updates from render is not allowed. ' +
-          'If necessary, trigger nested updates in componentDidUpdate.\n\n' +
-          'Check the render method of %s.',
-        getComponentNameFromFiber(ReactCurrentFiberCurrent) || 'Unknown',
-      );
-    }
-  }
-
+  // 创建更新对象，包含事件时间和优先级车道
   const update = createUpdate(eventTime, lane);
-  // Caution: React DevTools currently depends on this property
-  // being called "element".
+  // 注意：React DevTools 目前依赖这个属性名为 "element"
   update.payload = {element};
 
+  // 处理回调函数
   callback = callback === undefined ? null : callback;
   if (callback !== null) {
+    // 开发环境下验证回调函数类型
     if (__DEV__) {
       if (typeof callback !== 'function') {
         console.error(
@@ -375,15 +379,20 @@ export function updateContainer(
         );
       }
     }
+    // 将回调函数附加到更新对象上
     update.callback = callback;
   }
 
+  // 将更新加入队列，并获取根节点
   const root = enqueueUpdate(current, update, lane);
   if (root !== null) {
+    // 调度 Fiber 节点上的更新
     scheduleUpdateOnFiber(root, current, lane, eventTime);
+    // 处理并发模式下的过渡状态纠缠
     entangleTransitions(root, current, lane);
   }
 
+  // 返回更新优先级车道
   return lane;
 }
 

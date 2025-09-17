@@ -505,17 +505,28 @@ export function getWorkInProgressRootRenderLanes(): Lanes {
   return workInProgressRootRenderLanes;
 }
 
+/**
+ * 请求事件时间 - 获取用于优先级计算的时间戳
+ * 这个函数确保在同一个浏览器事件处理过程中，所有更新都使用相同的时间戳
+ * 这对于 React 的优先级调度和批处理机制至关重要
+ *
+ * @returns {number} 事件时间戳
+ */
 export function requestEventTime() {
+  // 检查当前是否在 React 的渲染或提交上下文中
   if ((executionContext & (RenderContext | CommitContext)) !== NoContext) {
-    // We're inside React, so it's fine to read the actual time.
+    // 我们在 React 内部，可以直接读取实际时间
     return now();
   }
-  // We're not inside React, so we may be in the middle of a browser event.
+
+  // 我们不在 React 内部，可能正在处理浏览器事件
   if (currentEventTime !== NoTimestamp) {
-    // Use the same start time for all updates until we enter React again.
+    // 使用相同的时间戳，直到我们重新进入 React
+    // 这确保了同一个浏览器事件中的所有更新具有相同的时间戳
     return currentEventTime;
   }
-  // This is the first update since React yielded. Compute a new start time.
+
+  // 这是自 React 让出控制权以来的第一次更新，计算新的开始时间
   currentEventTime = now();
   return currentEventTime;
 }
@@ -524,69 +535,69 @@ export function getCurrentTime() {
   return now();
 }
 
+/**
+ * 请求更新车道 - 为 Fiber 节点分配更新优先级车道
+ * 这个函数根据不同的更新来源和上下文，为更新分配合适的优先级车道
+ * 车道系统是 React 并发渲染和优先级调度的核心机制
+ *
+ * @param {Fiber} fiber - 需要更新的 Fiber 节点
+ * @returns {Lane} 返回分配的优先级车道
+ */
 export function requestUpdateLane(fiber: Fiber): Lane {
-  // Special cases
+  // 特殊情况处理
   const mode = fiber.mode;
+
+  // 情况1：非并发模式 - 直接返回同步车道
   if ((mode & ConcurrentMode) === NoMode) {
     return (SyncLane: Lane);
-  } else if (
+  }
+  // 情况2：渲染阶段更新 - 在组件渲染过程中触发的更新
+  else if (
     !deferRenderPhaseUpdateToNextBatch &&
     (executionContext & RenderContext) !== NoContext &&
     workInProgressRootRenderLanes !== NoLanes
   ) {
-    // This is a render phase update. These are not officially supported. The
-    // old behavior is to give this the same "thread" (lanes) as
-    // whatever is currently rendering. So if you call `setState` on a component
-    // that happens later in the same render, it will flush. Ideally, we want to
-    // remove the special case and treat them as if they came from an
-    // interleaved event. Regardless, this pattern is not officially supported.
-    // This behavior is only a fallback. The flag only exists until we can roll
-    // out the setState warning, since existing code might accidentally rely on
-    // the current behavior.
+    // 这是一个渲染阶段更新。这些更新不被官方支持。
+    // 旧的行为是给这个更新分配与当前正在渲染的相同"线程"（车道）。
+    // 所以如果你在同一个渲染中稍后发生的组件上调用 `setState`，它会立即刷新。
+    // 理想情况下，我们希望移除这个特殊情况，将它们视为来自交错事件。
+    // 无论如何，这种模式不被官方支持。
+    // 这种行为只是一个后备方案。这个标志只存在于我们能够推出 setState 警告之前，
+    // 因为现有代码可能意外地依赖当前行为。
     return pickArbitraryLane(workInProgressRootRenderLanes);
   }
 
+  // 情况3：过渡更新 - 使用 startTransition 或 useTransition 触发的更新
   const isTransition = requestCurrentTransition() !== NoTransition;
   if (isTransition) {
-    if (__DEV__ && ReactCurrentBatchConfig.transition !== null) {
-      const transition = ReactCurrentBatchConfig.transition;
-      if (!transition._updatedFibers) {
-        transition._updatedFibers = new Set();
-      }
-
-      transition._updatedFibers.add(fiber);
-    }
-    // The algorithm for assigning an update to a lane should be stable for all
-    // updates at the same priority within the same event. To do this, the
-    // inputs to the algorithm must be the same.
+    // 为更新分配车道的算法应该在同一个事件中所有相同优先级的更新中保持稳定。
+    // 要做到这一点，算法的输入必须相同。
     //
-    // The trick we use is to cache the first of each of these inputs within an
-    // event. Then reset the cached values once we can be sure the event is
-    // over. Our heuristic for that is whenever we enter a concurrent work loop.
+    // 我们使用的技巧是在一个事件中缓存这些输入中的第一个。
+    // 然后一旦我们确定事件结束，就重置缓存的值。
+    // 我们的启发式方法是每当我们进入并发工作循环时。
     if (currentEventTransitionLane === NoLane) {
-      // All transitions within the same event are assigned the same lane.
+      // 同一个事件中的所有过渡都被分配相同的车道。
       currentEventTransitionLane = claimNextTransitionLane();
     }
     return currentEventTransitionLane;
   }
 
-  // Updates originating inside certain React methods, like flushSync, have
-  // their priority set by tracking it with a context variable.
+  // 情况4：React 内部方法触发的更新 - 如 flushSync 等
+  // 这些更新的优先级通过上下文变量跟踪设置。
   //
-  // The opaque type returned by the host config is internally a lane, so we can
-  // use that directly.
-  // TODO: Move this type conversion to the event priority module.
+  // 主机配置返回的不透明类型内部是一个车道，所以我们可以直接使用它。
+  // TODO: 将此类型转换移动到事件优先级模块。
   const updateLane: Lane = (getCurrentUpdatePriority(): any);
   if (updateLane !== NoLane) {
     return updateLane;
   }
 
-  // This update originated outside React. Ask the host environment for an
-  // appropriate priority, based on the type of event.
+  // 情况5：React 外部触发的更新 - 如用户事件、网络请求等
+  // 这个更新来源于 React 外部。向主机环境询问适当的优先级，基于事件类型。
   //
-  // The opaque type returned by the host config is internally a lane, so we can
-  // use that directly.
-  // TODO: Move this type conversion to the event priority module.
+  // 主机配置返回的不透明类型内部是一个车道，所以我们可以直接使用它。
+  // TODO: 将此类型转换移动到事件优先级模块。
   const eventLane: Lane = (getCurrentEventPriority(): any);
   return eventLane;
 }
