@@ -231,7 +231,7 @@ export function createUpdate(eventTime: number, lane: Lane): Update<*> {
  * @returns {FiberRoot | null} 返回Fiber根节点（用于标记更新）或null（如果Fiber已卸载）
  */
 export function enqueueUpdate<State>(
-  fiber: Fiber,
+  fiber: Fiber, // current
   update: Update<State>,
   lane: Lane,
 ): FiberRoot | null {
@@ -246,7 +246,7 @@ export function enqueueUpdate<State>(
   // 获取共享的更新队列，这个队列在current和workInProgress之间共享
   const sharedQueue: SharedQueue<State> = (updateQueue: any).shared;
 
-  // 检查是否是不安全的渲染阶段更新
+  // 检查是否是不安全的渲染阶段更新（类组件 render方法执行的更新）
   if (isUnsafeClassRenderPhaseUpdate(fiber)) {
     // 这是一个不安全的渲染阶段更新
     // 在渲染过程中直接修改状态，需要立即处理以避免状态不一致
@@ -273,6 +273,7 @@ export function enqueueUpdate<State>(
   } else {
     // 正常的并发更新情况
     // 使用并发更新机制，将更新加入队列等待调度
+    // 返回一个根节点
     return enqueueConcurrentClassUpdate(fiber, sharedQueue, update, lane);
   }
 }

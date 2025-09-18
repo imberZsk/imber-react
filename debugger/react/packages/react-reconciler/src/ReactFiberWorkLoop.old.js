@@ -616,54 +616,54 @@ function requestRetryLane(fiber: Fiber) {
   return claimNextRetryLane();
 }
 
+/**
+ * 在指定的 Fiber 节点上调度更新
+ * 这是 React 更新调度的核心函数，负责处理所有类型的更新（同步、异步、并发等）
+ *
+ * @param {FiberRoot} root - 根 Fiber 节点
+ * @param {Fiber} fiber - 需要更新的 Fiber 节点
+ * @param {Lane} lane - 更新优先级车道
+ * @param {number} eventTime - 事件时间戳
+ */
 export function scheduleUpdateOnFiber(
   root: FiberRoot,
   fiber: Fiber,
   lane: Lane,
   eventTime: number,
 ) {
-  if (__DEV__) {
-    if (isRunningInsertionEffect) {
-      console.error('useInsertionEffect must not schedule updates.');
-    }
-  }
-
-  if (__DEV__) {
-    if (isFlushingPassiveEffects) {
-      didScheduleUpdateDuringPassiveEffects = true;
-    }
-  }
-
-  // Mark that the root has a pending update.
+  // 标记根节点有待处理的更新
   markRootUpdated(root, lane, eventTime);
 
+  // 检查是否在渲染阶段调度更新
   if (
     (executionContext & RenderContext) !== NoLanes &&
     root === workInProgressRoot
   ) {
-    // This update was dispatched during the render phase. This is a mistake
-    // if the update originates from user space (with the exception of local
-    // hook updates, which are handled differently and don't reach this
-    // function), but there are some internal React features that use this as
-    // an implementation detail, like selective hydration.
+    // 在渲染阶段调度的更新。如果更新来自用户空间，这通常是一个错误
+    // （除了本地 hook 更新，它们有不同的处理方式且不会到达此函数）
+    // 但有一些内部 React 功能将此作为实现细节使用，比如选择性水合
     warnAboutRenderPhaseUpdatesInDEV(fiber);
 
-    // Track lanes that were updated during the render phase
+    // 跟踪在渲染阶段更新的车道
     workInProgressRootRenderPhaseUpdatedLanes = mergeLanes(
       workInProgressRootRenderPhaseUpdatedLanes,
       lane,
     );
   } else {
-    // This is a normal update, scheduled from outside the render phase. For
-    // example, during an input event.
+    // 这是一个正常的更新，在渲染阶段之外调度
+    // 例如，在输入事件期间
+
+    // 如果启用了更新器跟踪，将 Fiber 添加到车道映射中（用于 DevTools）
     if (enableUpdaterTracking) {
       if (isDevToolsPresent) {
         addFiberToLanesMap(root, fiber, lane);
       }
     }
 
+    // 在开发模式下警告未用 act 包装的更新
     warnIfUpdatesNotWrappedWithActDEV(fiber);
 
+    // 处理性能分析器相关的嵌套更新调度钩子
     if (enableProfilerTimer && enableProfilerNestedUpdateScheduledHook) {
       if (
         (executionContext & CommitContext) !== NoContext &&
@@ -671,6 +671,7 @@ export function scheduleUpdateOnFiber(
       ) {
         if (fiber.mode & ProfileMode) {
           let current = fiber;
+          // 向上遍历 Fiber 树，查找 Profiler 组件
           while (current !== null) {
             if (current.tag === Profiler) {
               const {id, onNestedUpdateScheduled} = current.memoizedProps;
@@ -684,23 +685,25 @@ export function scheduleUpdateOnFiber(
       }
     }
 
+    // 处理过渡跟踪（Transition Tracing）
     if (enableTransitionTracing) {
       const transition = ReactCurrentBatchConfig.transition;
       if (transition !== null && transition.name != null) {
+        // 如果过渡还没有开始时间，设置开始时间
         if (transition.startTime === -1) {
           transition.startTime = now();
         }
 
+        // 将过渡添加到车道映射中
         addTransitionToLanesMap(root, transition, lane);
       }
     }
 
+    // 如果当前根节点正在渲染中
     if (root === workInProgressRoot) {
-      // Received an update to a tree that's in the middle of rendering. Mark
-      // that there was an interleaved update work on this root. Unless the
-      // `deferRenderPhaseUpdateToNextBatch` flag is off and this is a render
-      // phase update. In that case, we don't treat render phase updates as if
-      // they were interleaved, for backwards compat reasons.
+      // 接收到对正在渲染中的树的更新。标记此根节点有交错更新工作
+      // 除非 `deferRenderPhaseUpdateToNextBatch` 标志关闭且这是渲染阶段更新
+      // 在这种情况下，为了向后兼容，我们不将渲染阶段更新视为交错的
       if (
         deferRenderPhaseUpdateToNextBatch ||
         (executionContext & RenderContext) === NoContext
@@ -710,30 +713,31 @@ export function scheduleUpdateOnFiber(
           lane,
         );
       }
+
+      // 如果根节点已经延迟挂起，意味着当前渲染肯定不会完成
+      // 由于我们有新的更新，让我们在标记传入更新之前立即将其标记为挂起
+      // 这具有中断当前渲染并切换到更新的效果
       if (workInProgressRootExitStatus === RootSuspendedWithDelay) {
-        // The root already suspended with a delay, which means this render
-        // definitely won't finish. Since we have a new update, let's mark it as
-        // suspended now, right before marking the incoming update. This has the
-        // effect of interrupting the current render and switching to the update.
-        // TODO: Make sure this doesn't override pings that happen while we've
-        // already started rendering.
+        // TODO: 确保这不会覆盖我们在已经开始渲染时发生的 ping
         markRootSuspended(root, workInProgressRootRenderLanes);
       }
     }
 
+    // 确保根节点被调度
     ensureRootIsScheduled(root, eventTime);
+
+    // 处理同步更新的特殊情况（仅在传统模式下）
     if (
       lane === SyncLane &&
       executionContext === NoContext &&
       (fiber.mode & ConcurrentMode) === NoMode &&
-      // Treat `act` as if it's inside `batchedUpdates`, even in legacy mode.
+      // 将 `act` 视为在 `batchedUpdates` 内部，即使在传统模式下也是如此
       !(__DEV__ && ReactCurrentActQueue.isBatchingLegacy)
     ) {
-      // Flush the synchronous work now, unless we're already working or inside
-      // a batch. This is intentionally inside scheduleUpdateOnFiber instead of
-      // scheduleCallbackForFiber to preserve the ability to schedule a callback
-      // without immediately flushing it. We only do this for user-initiated
-      // updates, to preserve historical behavior of legacy mode.
+      // 立即刷新同步工作，除非我们已经在工作或处于批处理中
+      // 这有意放在 scheduleUpdateOnFiber 内部而不是 scheduleCallbackForFiber 中
+      // 以保留调度回调而不立即刷新它的能力
+      // 我们只对用户发起的更新执行此操作，以保留传统模式的历史行为
       resetRenderTimer();
       flushSyncCallbacksOnlyInLegacyMode();
     }

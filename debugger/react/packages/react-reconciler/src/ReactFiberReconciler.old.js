@@ -329,29 +329,25 @@ export function createHydrationContainer(
  * @returns {Lane} 返回更新优先级车道
  */
 export function updateContainer(
-  element: ReactNodeList,
+  element: ReactNodeList, // jsx
   container: OpaqueRoot,
   parentComponent: ?React$Component<any, any>,
   callback: ?Function,
 ): Lane {
-  // 开发环境下，记录根节点调度信息
-  if (__DEV__) {
-    onScheduleRoot(container, element);
-  }
-
   // 获取容器的当前 Fiber 节点
   const current = container.current;
+  debugger;
   // 获取当前事件时间戳，用于优先级计算
   const eventTime = requestEventTime();
   // 根据当前 Fiber 节点请求更新优先级车道
-  const lane = requestUpdateLane(current);
+  const lane = requestUpdateLane(current); // 第一次是默认车道
 
   // 如果启用了调度分析器，标记渲染调度
   if (enableSchedulingProfiler) {
     markRenderScheduled(lane);
   }
 
-  // 获取子树的上下文信息
+  // 获取子树的上下文信息（处理context）
   const context = getContextForSubtree(parentComponent);
   // 设置容器的上下文
   if (container.context === null) {
@@ -369,16 +365,6 @@ export function updateContainer(
   // 处理回调函数
   callback = callback === undefined ? null : callback;
   if (callback !== null) {
-    // 开发环境下验证回调函数类型
-    if (__DEV__) {
-      if (typeof callback !== 'function') {
-        console.error(
-          'render(...): Expected the last optional `callback` argument to be a ' +
-            'function. Instead received: %s.',
-          callback,
-        );
-      }
-    }
     // 将回调函数附加到更新对象上
     update.callback = callback;
   }

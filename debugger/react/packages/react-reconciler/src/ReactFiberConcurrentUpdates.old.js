@@ -90,25 +90,48 @@ export function getConcurrentlyUpdatedLanes(): Lanes {
   return concurrentlyUpdatedLanes;
 }
 
+/**
+ * 将更新加入并发更新队列
+ *
+ * 这是React并发更新系统的核心函数，负责：
+ * 1. 将更新信息暂存到全局并发队列中
+ * 2. 更新Fiber节点的车道信息
+ * 3. 处理双缓冲机制中的alternate Fiber
+ *
+ * 注意：如果当前正在渲染过程中，更新会被暂存，
+ * 等待当前渲染完成后才会被处理
+ *
+ * @param {Fiber} fiber - 需要更新的Fiber节点
+ * @param {ConcurrentQueue | null} queue - 共享更新队列（sharedQueue）
+ * @param {ConcurrentUpdate | null} update - 更新对象，包含新的状态信息
+ * @param {Lane} lane - 更新的优先级车道
+ */
 function enqueueUpdate(
   fiber: Fiber,
-  queue: ConcurrentQueue | null,
-  update: ConcurrentUpdate | null,
+  queue: ConcurrentQueue | null, // sharedQueue
+  update: ConcurrentUpdate | null, // update对象
   lane: Lane,
 ) {
-  // Don't update the `childLanes` on the return path yet. If we already in
-  // the middle of rendering, wait until after it has completed.
-  concurrentQueues[concurrentQueuesIndex++] = fiber;
-  concurrentQueues[concurrentQueuesIndex++] = queue;
-  concurrentQueues[concurrentQueuesIndex++] = update;
-  concurrentQueues[concurrentQueuesIndex++] = lane;
+  // 不要立即更新 `childLanes`，如果当前正在渲染过程中，
+  // 需要等待渲染完成后再处理
+  // 将更新信息按顺序加入全局并发队列数组
+  // 每个更新占用4个连续位置：[fiber, queue, update, lane]
+  concurrentQueues[concurrentQueuesIndex++] = fiber; // 存储Fiber节点
+  concurrentQueues[concurrentQueuesIndex++] = queue; // 存储更新队列
+  concurrentQueues[concurrentQueuesIndex++] = update; // 存储更新对象
+  concurrentQueues[concurrentQueuesIndex++] = lane; // 存储优先级车道
 
+  // 合并当前更新的车道到全局并发更新车道中
+  // 用于跟踪所有待处理的并发更新
   concurrentlyUpdatedLanes = mergeLanes(concurrentlyUpdatedLanes, lane);
 
-  // The fiber's `lane` field is used in some places to check if any work is
-  // scheduled, to perform an eager bailout, so we need to update it immediately.
-  // TODO: We should probably move this to the "shared" queue instead.
+  // Fiber的 `lane` 字段用于检查是否有工作被调度，
+  // 以便进行快速退出优化，所以需要立即更新
+  // TODO: 我们可能应该将此移动到 "shared" 队列中
   fiber.lanes = mergeLanes(fiber.lanes, lane);
+
+  // 处理双缓冲机制：同时更新alternate Fiber的车道信息
+  // 确保current和workInProgress两个Fiber树的状态保持一致
   const alternate = fiber.alternate;
   if (alternate !== null) {
     alternate.lanes = mergeLanes(alternate.lanes, lane);
@@ -143,7 +166,6 @@ export function enqueueConcurrentHookUpdateAndEagerlyBailout<S, A>(
 
 /**
  * 将类组件的更新加入并发更新队列
- *
  * 这个函数是类组件状态更新的入口点，负责将更新加入并发更新系统。
  * 它处理类组件的setState调用，将更新排队等待调度，并返回对应的FiberRoot用于调度。
  *
@@ -155,7 +177,7 @@ export function enqueueConcurrentHookUpdateAndEagerlyBailout<S, A>(
  */
 export function enqueueConcurrentClassUpdate<State>(
   fiber: Fiber,
-  queue: ClassQueue<State>,
+  queue: ClassQueue<State>, // sharedQueue
   update: ClassUpdate<State>,
   lane: Lane,
 ): FiberRoot | null {
