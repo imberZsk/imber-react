@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="./manifest.json" />
+
+    <!-- iOS 支持 -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="我的 PWA 应用" />
+
+    <!-- 主题色 -->
+    <meta name="theme-color" content="#000000" />
+  </head>
+  <body>
+    <h1>service worker</h1>
+
+    <button id="sendMessage">发送消息给 Service Worker</button>
+    <div id="messageResult"></div>
+
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./service-worker.js')
+      }
+
+      // 添加消息通信功能
+      document.getElementById('sendMessage').addEventListener('click', () => {
+        if (navigator.serviceWorker.controller) {
+          const messageChannel = new MessageChannel()
+
+          messageChannel.port1.onmessage = (event) => {
+            document.getElementById('messageResult').textContent =
+              '收到回复: ' + JSON.stringify(event.data)
+          }
+
+          navigator.serviceWorker.controller.postMessage('Hello from page!', [
+            messageChannel.port2
+          ])
+        } else {
+          document.getElementById('messageResult').textContent =
+            'Service Worker 未激活'
+        }
+      })
+    </script>
+  </body>
+</html>

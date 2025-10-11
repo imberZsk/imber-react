@@ -1,0 +1,21 @@
+{
+  "name": "我的 PWA 应用",
+  "short_name": "PWA Demo",
+  "description": "一个简单的 PWA 演示应用",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "https://fms.res.meizu.com/dms/2022/07/04/359f9dd5-2036-41d5-b6af-7afa0b689584.jpg",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://fms.res.meizu.com/dms/2022/07/04/359f9dd5-2036-41d5-b6af-7afa0b689584.jpg",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
