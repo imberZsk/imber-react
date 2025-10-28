@@ -254,6 +254,7 @@ export function createContainer(
   onRecoverableError: (error: mixed) => void,
   transitionCallbacks: null | TransitionTracingCallbacks,
 ): OpaqueRoot {
+  console.log('createContainer');
   const hydrate = false;
   const initialChildren = null;
   return createFiberRoot(
@@ -334,6 +335,7 @@ export function updateContainer(
   parentComponent: ?React$Component<any, any>,
   callback: ?Function,
 ): Lane {
+  console.log('updateContainer');
   // 获取容器的当前 Fiber 节点
   const current = container.current;
   debugger;

@@ -631,6 +631,7 @@ export function scheduleUpdateOnFiber(
   lane: Lane,
   eventTime: number,
 ) {
+  console.log('scheduleUpdateOnFiber', '开始调度的入口');
   // 标记根节点有待处理的更新
   markRootUpdated(root, lane, eventTime);
 
@@ -723,7 +724,7 @@ export function scheduleUpdateOnFiber(
       }
     }
 
-    // 确保根节点被调度
+    // 确保根节点被调度 - 连接到 Scheduler 的桥梁
     ensureRootIsScheduled(root, eventTime);
 
     // 处理同步更新的特殊情况（仅在传统模式下）
@@ -776,26 +777,25 @@ export function isUnsafeClassRenderPhaseUpdate(fiber: Fiber) {
   );
 }
 
-// Use this function to schedule a task for a root. There's only one task per
-// root; if a task was already scheduled, we'll check to make sure the priority
-// of the existing task is the same as the priority of the next level that the
-// root has work on. This function is called on every update, and right before
-// exiting a task.
+// 使用此函数为根节点调度任务。每个根节点只有一个任务；
+// 如果任务已经调度，我们会检查确保现有任务的优先级与根节点需要工作的下一个级别的优先级相同。
+// 此函数在每次更新时调用，并在退出任务之前调用。
 function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
+  console.log('ensureRootIsScheduled', '链接 Scheduler 的桥梁');
   const existingCallbackNode = root.callbackNode;
 
-  // Check if any lanes are being starved by other work. If so, mark them as
-  // expired so we know to work on those next.
+  // 检查是否有任何车道被其他工作饿死。如果有，将它们标记为过期，
+  // 这样我们就知道接下来要处理这些车道。
   markStarvedLanesAsExpired(root, currentTime);
 
-  // Determine the next lanes to work on, and their priority.
+  // 确定下一个要工作的车道及其优先级。
   const nextLanes = getNextLanes(
     root,
     root === workInProgressRoot ? workInProgressRootRenderLanes : NoLanes,
   );
 
   if (nextLanes === NoLanes) {
-    // Special case: There's nothing to work on.
+    // 特殊情况：没有工作需要处理。
     if (existingCallbackNode !== null) {
       cancelCallback(existingCallbackNode);
     }
@@ -804,16 +804,15 @@ function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
     return;
   }
 
-  // We use the highest priority lane to represent the priority of the callback.
+  // 我们使用最高优先级的车道来表示回调的优先级。
   const newCallbackPriority = getHighestPriorityLane(nextLanes);
 
-  // Check if there's an existing task. We may be able to reuse it.
+  // 检查是否已有现有任务。我们可能能够重用它。
   const existingCallbackPriority = root.callbackPriority;
   if (
     existingCallbackPriority === newCallbackPriority &&
-    // Special case related to `act`. If the currently scheduled task is a
-    // Scheduler task, rather than an `act` task, cancel it and re-scheduled
-    // on the `act` queue.
+    // 与 `act` 相关的特殊情况。如果当前调度的任务是调度器任务，
+    // 而不是 `act` 任务，则取消它并在 `act` 队列上重新调度。
     !(
       __DEV__ &&
       ReactCurrentActQueue.current !== null &&
@@ -821,9 +820,9 @@ function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
     )
   ) {
     if (__DEV__) {
-      // If we're going to re-use an existing task, it needs to exist.
-      // Assume that discrete update microtasks are non-cancellable and null.
-      // TODO: Temporary until we confirm this warning is not fired.
+      // 如果我们要重用现有任务，它必须存在。
+      // 假设离散更新微任务是不可取消的且为 null。
+      // TODO: 临时，直到我们确认此警告不会触发。
       if (
         existingCallbackNode == null &&
         existingCallbackPriority !== SyncLane
@@ -833,57 +832,57 @@ function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
         );
       }
     }
-    // The priority hasn't changed. We can reuse the existing task. Exit.
+    // 优先级没有改变。我们可以重用现有任务。退出。
     return;
   }
 
   if (existingCallbackNode != null) {
-    // Cancel the existing callback. We'll schedule a new one below.
+    // 取消现有回调。我们将在下面调度一个新的。
     cancelCallback(existingCallbackNode);
   }
 
-  // Schedule a new callback.
+  // 调度新的回调。
   let newCallbackNode;
-  if (newCallbackPriority === SyncLane) {
-    // Special case: Sync React callbacks are scheduled on a special
-    // internal queue
+  if (newCallbackPriority === SyncLane) { // （includesSyncLane）同步渲染，用户点击事件、输入事件、表单提交、紧急状态更新
+    // 特殊情况：同步 React 回调在特殊的内部队列上调度
     if (root.tag === LegacyRoot) {
       if (__DEV__ && ReactCurrentActQueue.isBatchingLegacy !== null) {
         ReactCurrentActQueue.didScheduleLegacyUpdate = true;
       }
       scheduleLegacySyncCallback(performSyncWorkOnRoot.bind(null, root));
     } else {
+      // 添加到 syncQueue
       scheduleSyncCallback(performSyncWorkOnRoot.bind(null, root));
     }
     if (supportsMicrotasks) {
-      // Flush the queue in a microtask.
+      // 在微任务中刷新队列。
       if (__DEV__ && ReactCurrentActQueue.current !== null) {
-        // Inside `act`, use our internal `act` queue so that these get flushed
-        // at the end of the current scope even when using the sync version
-        // of `act`.
+        // 在 `act` 内部，使用我们的内部 `act` 队列，这样即使在
+        // 使用同步版本的 `act` 时，这些也会在当前作用域结束时被刷新。
         ReactCurrentActQueue.current.push(flushSyncCallbacks);
       } else {
+        // 清空syncQueue
         scheduleMicrotask(() => {
-          // In Safari, appending an iframe forces microtasks to run.
+          // 在 Safari 中，附加 iframe 会强制微任务运行。
           // https://github.com/facebook/react/issues/22459
-          // We don't support running callbacks in the middle of render
-          // or commit so we need to check against that.
+          // 我们不支持在渲染或提交中间运行回调，所以我们需要检查。
           if (
             (executionContext & (RenderContext | CommitContext)) ===
             NoContext
           ) {
-            // Note that this would still prematurely flush the callbacks
-            // if this happens outside render or commit phase (e.g. in an event).
+            // 注意，如果这发生在渲染或提交阶段之外（例如在事件中），
+            // 这仍然会过早地刷新回调。
             flushSyncCallbacks();
           }
         });
       }
-    } else {
-      // Flush the queue in an Immediate task.
+    } else { 
+      // 在立即任务中刷新队列。
       scheduleCallback(ImmediateSchedulerPriority, flushSyncCallbacks);
     }
     newCallbackNode = null;
-  } else {
+  } else { // 并发渲染，数据请求，transition
+    // 根据车道优先级确定调度器优先级级别
     let schedulerPriorityLevel;
     switch (lanesToEventPriority(nextLanes)) {
       case DiscreteEventPriority:
@@ -902,79 +901,89 @@ function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
         schedulerPriorityLevel = NormalSchedulerPriority;
         break;
     }
+    // 调度并发工作回调
     newCallbackNode = scheduleCallback(
       schedulerPriorityLevel,
       performConcurrentWorkOnRoot.bind(null, root),
     );
   }
 
+  // 更新根节点的回调优先级和回调节点
   root.callbackPriority = newCallbackPriority;
   root.callbackNode = newCallbackNode;
 }
 
-// This is the entry point for every concurrent task, i.e. anything that
-// goes through Scheduler.
+/**
+ * 执行根节点的并发工作
+ * 这是每个并发任务的入口点，即任何通过 Scheduler 调度的任务
+ * 
+ * @param {FiberRoot} root - 要处理的根节点
+ * @param {boolean} didTimeout - 是否超时
+ * @returns {Function|null} 如果需要继续执行则返回绑定函数，否则返回 null
+ */
 function performConcurrentWorkOnRoot(root, didTimeout) {
+  // 如果启用了性能分析定时器和嵌套更新阶段，重置嵌套更新标志
   if (enableProfilerTimer && enableProfilerNestedUpdatePhase) {
     resetNestedUpdateFlag();
   }
 
-  // Since we know we're in a React event, we can clear the current
-  // event time. The next update will compute a new event time.
+  // 由于我们知道我们在 React 事件中，可以清除当前事件时间
+  // 下一个更新将计算新的事件时间
   currentEventTime = NoTimestamp;
   currentEventTransitionLane = NoLanes;
 
+  // 检查是否已经在渲染或提交上下文中，如果是则抛出错误
   if ((executionContext & (RenderContext | CommitContext)) !== NoContext) {
     throw new Error('Should not already be working.');
   }
 
-  // Flush any pending passive effects before deciding which lanes to work on,
-  // in case they schedule additional work.
+  // 在决定处理哪些 lanes 之前，先刷新任何待处理的被动效果
+  // 以防它们调度额外的工作
   const originalCallbackNode = root.callbackNode;
   const didFlushPassiveEffects = flushPassiveEffects();
   if (didFlushPassiveEffects) {
-    // Something in the passive effect phase may have canceled the current task.
-    // Check if the task node for this root was changed.
+    // 被动效果阶段中的某些操作可能已经取消了当前任务
+    // 检查此根节点的任务节点是否已更改
     if (root.callbackNode !== originalCallbackNode) {
-      // The current task was canceled. Exit. We don't need to call
-      // `ensureRootIsScheduled` because the check above implies either that
-      // there's a new task, or that there's no remaining work on this root.
+      // 当前任务已被取消，退出
+      // 我们不需要调用 ensureRootIsScheduled，因为上面的检查意味着
+      // 要么有新任务，要么此根节点上没有剩余工作
       return null;
     } else {
-      // Current task was not canceled. Continue.
+      // 当前任务未被取消，继续执行
     }
   }
 
-  // Determine the next lanes to work on, using the fields stored
-  // on the root.
+  // 确定要处理的下一个 lanes，使用存储在根节点上的字段
   let lanes = getNextLanes(
     root,
     root === workInProgressRoot ? workInProgressRootRenderLanes : NoLanes,
   );
   if (lanes === NoLanes) {
-    // Defensive coding. This is never expected to happen.
+    // 防御性编程，这不应该发生
     return null;
   }
 
-  // We disable time-slicing in some cases: if the work has been CPU-bound
-  // for too long ("expired" work, to prevent starvation), or we're in
-  // sync-updates-by-default mode.
-  // TODO: We only check `didTimeout` defensively, to account for a Scheduler
-  // bug we're still investigating. Once the bug in Scheduler is fixed,
-  // we can remove this, since we track expiration ourselves.
+  // 在某些情况下我们禁用时间切片：
+  // 1. 工作已经 CPU 密集型运行太久（"过期"工作，防止饥饿）
+  // 2. 我们处于默认同步更新模式
+  // TODO: 我们只是防御性地检查 didTimeout，以应对我们仍在调查的 Scheduler 错误
+  // 一旦 Scheduler 中的错误被修复，我们可以删除这个，因为我们自己跟踪过期
   const shouldTimeSlice =
     !includesBlockingLane(root, lanes) &&
     !includesExpiredLane(root, lanes) &&
     (disableSchedulerTimeoutInWorkLoop || !didTimeout);
+  
+  // 根据是否应该时间切片选择渲染方式
   let exitStatus = shouldTimeSlice
-    ? renderRootConcurrent(root, lanes)
-    : renderRootSync(root, lanes);
+    ? renderRootConcurrent(root, lanes)  // 并发渲染
+    : renderRootSync(root, lanes);      // 同步渲染
+  // 如果渲染状态不是进行中，处理各种退出状态
   if (exitStatus !== RootInProgress) {
     if (exitStatus === RootErrored) {
-      // If something threw an error, try rendering one more time. We'll
-      // render synchronously to block concurrent data mutations, and we'll
-      // includes all pending updates are included. If it still fails after
-      // the second attempt, we'll give up and commit the resulting tree.
+      // 如果某些东西抛出错误，尝试再次渲染
+      // 我们将同步渲染以阻止并发数据突变，并包含所有待处理的更新
+      // 如果在第二次尝试后仍然失败，我们将放弃并提交结果树
       const errorRetryLanes = getLanesToRetrySynchronouslyOnError(root);
       if (errorRetryLanes !== NoLanes) {
         lanes = errorRetryLanes;
@@ -982,6 +991,7 @@ function performConcurrentWorkOnRoot(root, didTimeout) {
       }
     }
     if (exitStatus === RootFatalErrored) {
+      // 处理致命错误
       const fatalError = workInProgressRootFatalError;
       prepareFreshStack(root, NoLanes);
       markRootSuspended(root, lanes);
@@ -990,40 +1000,36 @@ function performConcurrentWorkOnRoot(root, didTimeout) {
     }
 
     if (exitStatus === RootDidNotComplete) {
-      // The render unwound without completing the tree. This happens in special
-      // cases where need to exit the current render without producing a
-      // consistent tree or committing.
+      // 渲染在没有完成树的情况下展开，这在特殊情况下发生
+      // 需要退出当前渲染而不产生一致的树或提交
       //
-      // This should only happen during a concurrent render, not a discrete or
-      // synchronous update. We should have already checked for this when we
-      // unwound the stack.
+      // 这应该只在并发渲染期间发生，而不是离散或同步更新
+      // 我们在展开堆栈时应该已经检查过这个
       markRootSuspended(root, lanes);
     } else {
-      // The render completed.
+      // 渲染已完成
 
-      // Check if this render may have yielded to a concurrent event, and if so,
-      // confirm that any newly rendered stores are consistent.
-      // TODO: It's possible that even a concurrent render may never have yielded
-      // to the main thread, if it was fast enough, or if it expired. We could
-      // skip the consistency check in that case, too.
+      // 检查此渲染是否可能已让出给并发事件，如果是，
+      // 确认任何新渲染的存储都是一致的
+      // TODO: 即使并发渲染也可能从未让出给主线程，如果它足够快，或者如果它过期了
+      // 在这种情况下，我们也可以跳过一致性检查
       const renderWasConcurrent = !includesBlockingLane(root, lanes);
       const finishedWork: Fiber = (root.current.alternate: any);
       if (
         renderWasConcurrent &&
         !isRenderConsistentWithExternalStores(finishedWork)
       ) {
-        // A store was mutated in an interleaved event. Render again,
-        // synchronously, to block further mutations.
+        // 存储在一个交错事件中被突变，再次渲染，
+        // 同步地，以阻止进一步的突变
         exitStatus = renderRootSync(root, lanes);
 
-        // We need to check again if something threw
+        // 我们需要再次检查是否有东西抛出错误
         if (exitStatus === RootErrored) {
           const errorRetryLanes = getLanesToRetrySynchronouslyOnError(root);
           if (errorRetryLanes !== NoLanes) {
             lanes = errorRetryLanes;
             exitStatus = recoverFromConcurrentError(root, errorRetryLanes);
-            // We assume the tree is now consistent because we didn't yield to any
-            // concurrent events.
+            // 我们假设树现在是一致的，因为我们没有让出给任何并发事件
           }
         }
         if (exitStatus === RootFatalErrored) {
@@ -1035,18 +1041,19 @@ function performConcurrentWorkOnRoot(root, didTimeout) {
         }
       }
 
-      // We now have a consistent tree. The next step is either to commit it,
-      // or, if something suspended, wait to commit it after a timeout.
+      // 我们现在有一个一致的树，下一步要么提交它，
+      // 要么，如果某些东西被暂停，等待超时后提交它
       root.finishedWork = finishedWork;
       root.finishedLanes = lanes;
       finishConcurrentRender(root, exitStatus, lanes);
     }
   }
 
+  // 确保根节点被调度
   ensureRootIsScheduled(root, now());
   if (root.callbackNode === originalCallbackNode) {
-    // The task node scheduled for this root is the same one that's
-    // currently executed. Need to return a continuation.
+    // 为此根节点调度的任务节点与当前执行的节点相同
+    // 需要返回一个延续函数
     return performConcurrentWorkOnRoot.bind(null, root);
   }
   return null;

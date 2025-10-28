@@ -142,6 +142,7 @@ export function createFiberRoot(
   onRecoverableError: null | ((error: mixed) => void),
   transitionCallbacks: null | TransitionTracingCallbacks,
 ): FiberRoot {
+  console.log('createFiberRoot');
   const root: FiberRoot = (new FiberRootNode(
     containerInfo,
     tag,

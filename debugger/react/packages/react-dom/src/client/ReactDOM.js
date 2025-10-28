@@ -133,6 +133,7 @@ function createRoot(
   options?: CreateRootOptions,
 ): RootType {
   debugger;
+  console.log('createRoot');
 
   return createRootImpl(container, options);
 }
