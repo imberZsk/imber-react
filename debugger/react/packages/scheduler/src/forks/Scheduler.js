@@ -552,55 +552,85 @@ let needsPaint = false;
  * - 若支持 navigator.scheduling.isInputPending，则更智能地感知输入压力；否则保守让出。
  */
 function shouldYieldToHost() {
+  // 计算主线程被阻塞的时间长度
   const timeElapsed = getCurrentTime() - startTime;
+  
+  // 第一层判断：极短时间窗口（小于一帧时间）
   if (timeElapsed < frameInterval) {
-    // The main thread has only been blocked for a really short amount of time;
-    // smaller than a single frame. Don't yield yet.
-    // 主线程仅被阻塞了极短时间（小于一帧），为降低切换开销，暂不让出。
+    // 英文注释翻译：
+    // 主线程仅被阻塞了极短时间，小于一帧的时间。暂时不让出控制权。
+    // 中文详细解释：
+    // 在极短时间窗口内，切换上下文的开销可能大于继续执行的好处
+    // 因此选择继续执行，避免频繁的让出/恢复操作
     return false;
   }
 
-  // The main thread has been blocked for a non-negligible amount of time. We
-  // may want to yield control of the main thread, so the browser can perform
-  // high priority tasks. The main ones are painting and user input. If there's
-  // a pending paint or a pending input, then we should yield. But if there's
-  // neither, then we can yield less often while remaining responsive. We'll
-  // eventually yield regardless, since there could be a pending paint that
-  // wasn't accompanied by a call to `requestPaint`, or other main thread tasks
-  // like network events.
-  // 超过短窗口：根据绘制/输入压力决定。
+  // 第二层判断：超过短时间窗口后的智能让出策略
+  // 英文注释翻译：
+  // 主线程已经被阻塞了不可忽略的时间。我们可能想要让出主线程的控制权，
+  // 以便浏览器可以执行高优先级任务。主要的高优先级任务包括绘制和用户输入。
+  // 如果有待处理的绘制或输入，那么我们应该让出。但如果没有这些，
+  // 我们可以在保持响应性的同时减少让出频率。我们最终还是会让出，
+  // 因为可能存在没有伴随 `requestPaint` 调用的待处理绘制，
+  // 或其他主线程任务，如网络事件。
+  
+  // 中文详细解释：
+  // 超过短时间窗口后，需要根据系统压力智能决定是否让出
+  // 策略：优先响应绘制和用户输入，同时避免过度频繁的让出
   if (enableIsInputPending) {
+    // 优先级1：绘制信号检查
     if (needsPaint) {
-      // There's a pending paint (signaled by `requestPaint`). Yield now.
-      // 若存在待绘制（通过 requestPaint 标记），立即让出以优先绘制。
+      // 英文注释翻译：
+      // 有待处理的绘制（通过 `requestPaint` 标记）。立即让出。
+      // 中文详细解释：
+      // 当检测到有待处理的绘制工作时，立即让出控制权
+      // 这确保了视觉更新的及时性，避免界面卡顿
       return true;
     }
+    
+    // 优先级2：短时间窗口的输入检查（仅检查离散输入）
     if (timeElapsed < continuousInputInterval) {
-      // We haven't blocked the thread for that long. Only yield if there's a
-      // pending discrete input (e.g. click). It's OK if there's pending
-      // continuous input (e.g. mouseover).
-      // 在较短的中间窗口，仅在有离散输入（如点击）待处理时让出；
-      // 连续输入（如 mouseover）可适当延后以减少让出频率。
+      // 英文注释翻译：
+      // 我们还没有阻塞线程那么长时间。只有在有待处理的离散输入（如点击）时才让出。
+      // 如果有待处理的连续输入（如鼠标悬停），这是可以接受的。
+      // 中文详细解释：
+      // 在较短的时间窗口内，只对离散输入（如点击、键盘按键）敏感
+      // 连续输入（如鼠标移动、滚动）可以适当延后处理
+      // 这样可以在保持响应性的同时减少不必要的让出
       if (isInputPending !== null) {
-        return isInputPending();
+        return isInputPending(); // 只检查离散输入
       }
-    } else if (timeElapsed < maxInterval) {
-      // Yield if there's either a pending discrete or continuous input.
-      // 进入较长窗口：只要有任一类型输入（离散/连续）待处理就让出。
+    } 
+    // 优先级3：中等时间窗口的输入检查（检查所有类型输入）
+    else if (timeElapsed < maxInterval) {
+      // 英文注释翻译：
+      // 如果有待处理的离散或连续输入，就让出。
+      // 中文详细解释：
+      // 进入中等时间窗口，对输入更加敏感
+      // 无论是离散输入还是连续输入，都值得让出控制权
       if (isInputPending !== null) {
-        return isInputPending(continuousOptions);
+        return isInputPending(continuousOptions); // 检查所有类型输入
       }
-    } else {
-      // We've blocked the thread for a long time. Even if there's no pending
-      // input, there may be some other scheduled work that we don't know about,
-      // like a network event. Yield now.
-      // 超过最大窗口：即便没有输入，也可能有其他主线程任务（网络等），无条件让出。
+    } 
+    // 优先级4：长时间窗口的无条件让出
+    else {
+      // 英文注释翻译：
+      // 我们已经阻塞线程很长时间了。即使没有待处理的输入，
+      // 也可能有一些我们不知道的其他调度工作，如网络事件。立即让出。
+      // 中文详细解释：
+      // 超过最大时间窗口后，无论是否有输入信号，都无条件让出
+      // 因为可能存在其他类型的主线程任务（网络、定时器等）
+      // 长时间占用主线程会严重影响系统整体响应性
       return true;
     }
   }
 
-  // `isInputPending` isn't available. Yield now.
-  // 无法感知输入压力的环境下，采取保守策略：让出。
+  // 降级策略：不支持 isInputPending 时的保守让出
+  // 英文注释翻译：
+  // `isInputPending` 不可用。立即让出。
+  // 中文详细解释：
+  // 在不支持输入检测的环境中（如旧版浏览器），采用保守策略
+  // 直接让出控制权，确保系统响应性
   return true;
 }
 

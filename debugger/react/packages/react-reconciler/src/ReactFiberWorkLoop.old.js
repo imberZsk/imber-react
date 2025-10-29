@@ -631,7 +631,7 @@ export function scheduleUpdateOnFiber(
   lane: Lane,
   eventTime: number,
 ) {
-  console.log('scheduleUpdateOnFiber', '开始调度的入口');
+  console.log('scheduleUpdateOnFiber', '开始调度的入口标记Root的pendingLanes'，);
   // 标记根节点有待处理的更新
   markRootUpdated(root, lane, eventTime);
 
@@ -1541,50 +1541,78 @@ export function getRenderLanes(): Lanes {
   return renderLanes;
 }
 
+/**
+ * prepareFreshStack
+ * 准备新的工作栈：为新的渲染周期初始化所有相关状态
+ * - 清理之前渲染的完成状态和超时处理
+ * - 处理被中断的工作栈，确保状态一致性
+ * - 创建新的工作进度 Fiber 并初始化全局状态
+ * - 完成并发更新的队列化处理
+ * 
+ * @param {FiberRoot} root - 要准备新工作栈的根节点
+ * @param {Lanes} lanes - 新的渲染优先级车道
+ * @returns {Fiber} 新创建的工作进度根 Fiber
+ */
 function prepareFreshStack(root: FiberRoot, lanes: Lanes): Fiber {
+  // 清理根节点的完成状态：重置已完成的工作和车道
   root.finishedWork = null;
   root.finishedLanes = NoLanes;
 
+  // 处理超时回调：如果根节点之前暂停并设置了超时回调
   const timeoutHandle = root.timeoutHandle;
   if (timeoutHandle !== noTimeout) {
-    // The root previous suspended and scheduled a timeout to commit a fallback
-    // state. Now that we have additional work, cancel the timeout.
+    // 根节点之前暂停并调度了超时来提交回退状态
+    // 现在我们有了额外的工作，取消这个超时
     root.timeoutHandle = noTimeout;
     // $FlowFixMe Complains noTimeout is not a TimeoutID, despite the check above
     cancelTimeout(timeoutHandle);
   }
 
+  // 处理被中断的工作：如果当前有进行中的工作，需要清理
   if (workInProgress !== null) {
+    // 从当前工作单元开始，向上遍历到根节点
     let interruptedWork = workInProgress.return;
     while (interruptedWork !== null) {
       const current = interruptedWork.alternate;
+      // 展开被中断的工作：清理状态并恢复一致性
       unwindInterruptedWork(
         current,
         interruptedWork,
         workInProgressRootRenderLanes,
       );
+      // 继续向上遍历父节点
       interruptedWork = interruptedWork.return;
     }
   }
+  
+  // 设置新的工作根节点
   workInProgressRoot = root;
+  
+  // 为根节点创建新的工作进度 Fiber
+  // 这是整个渲染树的起点，alternate 为 null 表示是全新的工作
   const rootWorkInProgress = createWorkInProgress(root.current, null);
   workInProgress = rootWorkInProgress;
-  workInProgressRootRenderLanes = renderLanes = lanes;
-  workInProgressRootExitStatus = RootInProgress;
-  workInProgressRootFatalError = null;
-  workInProgressRootSkippedLanes = NoLanes;
-  workInProgressRootInterleavedUpdatedLanes = NoLanes;
-  workInProgressRootRenderPhaseUpdatedLanes = NoLanes;
-  workInProgressRootPingedLanes = NoLanes;
-  workInProgressRootConcurrentErrors = null;
-  workInProgressRootRecoverableErrors = null;
+  
+  // 初始化渲染相关的全局状态
+  workInProgressRootRenderLanes = renderLanes = lanes; // 设置渲染车道
+  workInProgressRootExitStatus = RootInProgress; // 标记为进行中状态
+  workInProgressRootFatalError = null; // 清空致命错误
+  workInProgressRootSkippedLanes = NoLanes; // 清空跳过的车道
+  workInProgressRootInterleavedUpdatedLanes = NoLanes; // 清空交错更新的车道
+  workInProgressRootRenderPhaseUpdatedLanes = NoLanes; // 清空渲染阶段更新的车道
+  workInProgressRootPingedLanes = NoLanes; // 清空被 ping 的车道
+  workInProgressRootConcurrentErrors = null; // 清空并发错误
+  workInProgressRootRecoverableErrors = null; // 清空可恢复错误
 
+  // 完成并发更新的队列化：将待处理的更新加入队列
   finishQueueingConcurrentUpdates();
 
+  // 开发模式：丢弃待处理的严格模式警告
   if (__DEV__) {
     ReactStrictModeWarnings.discardPendingWarnings();
   }
 
+  // 返回新创建的工作进度根 Fiber
   return rootWorkInProgress;
 }
 
@@ -1838,134 +1866,219 @@ function workLoopSync() {
   }
 }
 
+/**
+ * renderRootConcurrent
+ * 并发渲染根节点：在时间切片中执行 Fiber 树的渲染工作
+ * - 支持中断和恢复，通过 workLoopConcurrent 实现时间切片
+ * - 处理根节点或优先级变化时的状态重置
+ * - 管理开发工具的状态跟踪和性能分析
+ * 
+ * @param {FiberRoot} root - 要渲染的 Fiber 根节点
+ * @param {Lanes} lanes - 渲染优先级车道
+ * @returns {RootExitStatus} 渲染结果状态
+ */
 function renderRootConcurrent(root: FiberRoot, lanes: Lanes) {
+  // 保存当前执行上下文，并切换到渲染上下文
   const prevExecutionContext = executionContext;
   executionContext |= RenderContext;
+  
+  // 保存当前 dispatcher，并推入新的 dispatcher
   const prevDispatcher = pushDispatcher();
 
-  // If the root or lanes have changed, throw out the existing stack
-  // and prepare a fresh one. Otherwise we'll continue where we left off.
+  // 检查是否需要重置工作栈
+  // 如果根节点或优先级车道发生变化，丢弃现有栈并准备新的
   if (workInProgressRoot !== root || workInProgressRootRenderLanes !== lanes) {
+    // 开发工具状态跟踪：处理更新器状态
     if (enableUpdaterTracking) {
       if (isDevToolsPresent) {
         const memoizedUpdaters = root.memoizedUpdaters;
         if (memoizedUpdaters.size > 0) {
+          // 恢复待处理的更新器到之前的状态
           restorePendingUpdaters(root, workInProgressRootRenderLanes);
           memoizedUpdaters.clear();
         }
 
-        // At this point, move Fibers that scheduled the upcoming work from the Map to the Set.
-        // If we bailout on this work, we'll move them back (like above).
-        // It's important to move them now in case the work spawns more work at the same priority with different updaters.
-        // That way we can keep the current update and future updates separate.
+        // 将调度了即将进行的工作的 Fiber 从 Map 移动到 Set
+        // 如果在此工作上回退，我们会将它们移回（如上面所示）
+        // 现在移动它们很重要，以防工作在同一优先级下产生更多具有不同更新器的工作
+        // 这样我们可以将当前更新和未来更新分开
         movePendingFibersToMemoized(root, lanes);
       }
     }
 
+    // 获取当前优先级车道对应的过渡状态
     workInProgressTransitions = getTransitionsForLanes(root, lanes);
+    
+    // 重置渲染计时器
     resetRenderTimer();
+    
+    // 准备新的工作栈：初始化 workInProgress 和相关状态
     prepareFreshStack(root, lanes);
   }
 
+  // 开发模式：记录渲染开始
   if (__DEV__) {
     if (enableDebugTracing) {
       logRenderStarted(lanes);
     }
   }
 
+  // 性能分析：标记渲染开始
   if (enableSchedulingProfiler) {
     markRenderStarted(lanes);
   }
 
+  // 主渲染循环：持续执行直到完成或出错
   do {
     try {
+      // 执行并发工作循环，可能被时间切片中断
       workLoopConcurrent();
-      break;
+      break; // 正常完成，退出循环
     } catch (thrownValue) {
+      // 捕获错误并处理，然后继续循环
       handleError(root, thrownValue);
     }
   } while (true);
+  
+  // 重置上下文依赖
   resetContextDependencies();
 
+  // 恢复之前的 dispatcher 和执行上下文
   popDispatcher(prevDispatcher);
   executionContext = prevExecutionContext;
 
+  // 开发模式：记录渲染停止
   if (__DEV__) {
     if (enableDebugTracing) {
       logRenderStopped();
     }
   }
 
-  // Check if the tree has completed.
+  // 检查渲染是否完成
   if (workInProgress !== null) {
-    // Still work remaining.
+    // 还有剩余工作：渲染被中断，需要继续
     if (enableSchedulingProfiler) {
-      markRenderYielded();
+      markRenderYielded(); // 标记渲染让出
     }
-    return RootInProgress;
+    return RootInProgress; // 返回进行中状态
   } else {
-    // Completed the tree.
+    // 渲染完成：整个树已处理完毕
     if (enableSchedulingProfiler) {
-      markRenderStopped();
+      markRenderStopped(); // 标记渲染停止
     }
 
-    // Set this to null to indicate there's no in-progress render.
+    // 清空进行中的渲染状态
     workInProgressRoot = null;
     workInProgressRootRenderLanes = NoLanes;
 
-    // Return the final exit status.
+    // 返回最终的退出状态（可能是 RootCompleted 或 RootFatalErrored）
     return workInProgressRootExitStatus;
   }
 }
 
 /** @noinline */
+/**
+ * workLoopConcurrent
+ * 并发工作循环：在时间切片中持续执行 Fiber 工作单元
+ * - 通过 shouldYield() 检查是否应该让出控制权给调度器
+ * - 每次循环处理一个工作单元，直到没有工作或需要让出
+ * - 这是 React 并发特性的核心实现，支持渲染中断和恢复
+ */
 function workLoopConcurrent() {
-  // Perform work until Scheduler asks us to yield
+  // 持续执行工作直到调度器要求让出控制权
+  // workInProgress !== null：还有待处理的工作单元
+  // !shouldYield()：调度器允许继续执行（未达到时间切片边界）
   while (workInProgress !== null && !shouldYield()) {
+    // 执行当前工作单元：包括 beginWork 和 completeWork
+    // 执行后 workInProgress 会指向下一个待处理的工作单元
     performUnitOfWork(workInProgress);
   }
+  // 循环结束条件：
+  // 1. workInProgress === null：所有工作单元已处理完毕
+  // 2. shouldYield() === true：达到时间切片边界，需要让出控制权
 }
 
+/**
+ * performUnitOfWork
+ * 执行单个工作单元：处理一个 Fiber 节点的渲染工作
+ * - 调用 beginWork 进行组件的渲染和子节点的创建
+ * - 根据 beginWork 的返回值决定下一步操作
+ * - 支持性能分析和开发调试功能
+ * 
+ * @param {Fiber} unitOfWork - 要处理的工作单元 Fiber 节点
+ */
 function performUnitOfWork(unitOfWork: Fiber): void {
-  // The current, flushed, state of this fiber is the alternate. Ideally
-  // nothing should rely on this, but relying on it here means that we don't
-  // need an additional field on the work in progress.
+  // 获取当前 Fiber 的 alternate（已提交的版本）
+  // 英文注释翻译：
+  // 这个 Fiber 的当前、已刷新的状态是 alternate。理想情况下
+  // 不应该依赖这个，但在这里依赖它意味着我们不需要
+  // 在工作进度中添加额外的字段。
+  // 中文详细解释：
+  // alternate 是 Fiber 的双缓存机制中的已提交版本
+  // 通过 alternate 可以获取到组件的前一次渲染结果
+  // 用于 diff 算法和状态比较
   const current = unitOfWork.alternate;
+  
+  // 开发模式：设置当前调试的 Fiber 节点
   setCurrentDebugFiberInDEV(unitOfWork);
 
-  let next;
+  let next; // 下一个要处理的工作单元
   if (enableProfilerTimer && (unitOfWork.mode & ProfileMode) !== NoMode) {
+    // 性能分析模式：记录组件渲染时间
     startProfilerTimer(unitOfWork);
+    // 执行 beginWork：渲染当前组件并创建子节点
     next = beginWork(current, unitOfWork, renderLanes);
+    // 停止计时器并记录渲染耗时
     stopProfilerTimerIfRunningAndRecordDelta(unitOfWork, true);
   } else {
+    // 普通模式：直接执行 beginWork
     next = beginWork(current, unitOfWork, renderLanes);
   }
 
+  // 开发模式：重置当前调试的 Fiber 节点
   resetCurrentDebugFiberInDEV();
+  
+  // 将待处理的 props 标记为已记忆的 props
+  // 这表示这些 props 已经被处理过了
   unitOfWork.memoizedProps = unitOfWork.pendingProps;
+  
   if (next === null) {
-    // If this doesn't spawn new work, complete the current work.
+    // beginWork 返回 null：当前工作单元没有产生新的子工作
+    // 英文注释翻译：
+    // 如果这没有产生新的工作，完成当前工作。
+    // 中文详细解释：
+    // 当组件没有子组件或者子组件不需要更新时
+    // beginWork 会返回 null，表示当前节点的工作已完成
+    // 需要调用 completeUnitOfWork 来完成当前节点的工作
     completeUnitOfWork(unitOfWork);
   } else {
+    // beginWork 返回了子 Fiber：还有新的工作单元需要处理
+    // 将 workInProgress 指向下一个要处理的工作单元
+    // 这样 workLoopConcurrent 会在下次循环中处理这个新的工作单元
     workInProgress = next;
   }
 
+  // 清空当前所有者引用，避免内存泄漏
+  // 这是 React 内部状态管理的一部分
   ReactCurrentOwner.current = null;
 }
 
+/**
+ * completeUnitOfWork
+ * 完成当前工作单元，并按深度优先的逆序回溯到兄弟或父节点
+ * - 正常路径：进入 completeWork，可能派生出新的工作（如插入副作用）
+ * - 异常路径：进入 unwindWork，回滚并标记父级未完成
+ * - 回溯策略：优先处理兄弟；无兄弟则回到父级；到根则设置完成状态
+ */
 function completeUnitOfWork(unitOfWork: Fiber): void {
-  // Attempt to complete the current unit of work, then move to the next
-  // sibling. If there are no more siblings, return to the parent fiber.
+  // 尝试完成当前工作单元，然后处理下一个兄弟；若无兄弟则回到父节点
   let completedWork = unitOfWork;
   do {
-    // The current, flushed, state of this fiber is the alternate. Ideally
-    // nothing should rely on this, but relying on it here means that we don't
-    // need an additional field on the work in progress.
+    // alternate：该 Fiber 在已提交树中的对应节点（用于对比与回滚）
     const current = completedWork.alternate;
     const returnFiber = completedWork.return;
 
-    // Check if the work completed or if something threw.
+    // 分支：本节点是否正常完成（未带有 Incomplete 标记）
     if ((completedWork.flags & Incomplete) === NoFlags) {
       setCurrentDebugFiberInDEV(completedWork);
       let next;
@@ -1973,33 +2086,33 @@ function completeUnitOfWork(unitOfWork: Fiber): void {
         !enableProfilerTimer ||
         (completedWork.mode & ProfileMode) === NoMode
       ) {
+        // 正常完成阶段：执行 completeWork，可能生成更多工作（如副作用收集）
         next = completeWork(current, completedWork, renderLanes);
       } else {
+        // 性能分析：记录完成阶段耗时
         startProfilerTimer(completedWork);
         next = completeWork(current, completedWork, renderLanes);
-        // Update render duration assuming we didn't error.
+        // 未出错前提下更新渲染耗时
         stopProfilerTimerIfRunningAndRecordDelta(completedWork, false);
       }
       resetCurrentDebugFiberInDEV();
 
       if (next !== null) {
-        // Completing this fiber spawned new work. Work on that next.
+        // completeWork 派生出新的工作（例如向上冒泡的副作用或更新）
+        // 立即切换去处理该工作
         workInProgress = next;
         return;
       }
     } else {
-      // This fiber did not complete because something threw. Pop values off
-      // the stack without entering the complete phase. If this is a boundary,
-      // capture values if possible.
+      // 异常路径：该 Fiber 未完成（抛错或中断）
+      // 不进入 complete 阶段，转而展开回滚逻辑
       const next = unwindWork(current, completedWork, renderLanes);
 
-      // Because this fiber did not complete, don't reset its lanes.
+      // 注意：未完成的节点不重置其 lanes，保持后续可重试性
 
       if (next !== null) {
-        // If completing this work spawned new work, do that next. We'll come
-        // back here again.
-        // Since we're restarting, remove anything that is not a host effect
-        // from the effect tag.
+        // 回滚可能派生出新的需要立刻处理的工作
+        // 既然是重新开始，去除非 host effect 的标记，只保留宿主相关效果
         next.flags &= HostEffectMask;
         workInProgress = next;
         return;
@@ -2009,10 +2122,9 @@ function completeUnitOfWork(unitOfWork: Fiber): void {
         enableProfilerTimer &&
         (completedWork.mode & ProfileMode) !== NoMode
       ) {
-        // Record the render duration for the fiber that errored.
+        // 记录出错 Fiber 的渲染耗时，并将失败子树的耗时汇总到当前
         stopProfilerTimerIfRunningAndRecordDelta(completedWork, false);
 
-        // Include the time spent working on failed children before continuing.
         let actualDuration = completedWork.actualDuration;
         let child = completedWork.child;
         while (child !== null) {
@@ -2023,12 +2135,12 @@ function completeUnitOfWork(unitOfWork: Fiber): void {
       }
 
       if (returnFiber !== null) {
-        // Mark the parent fiber as incomplete and clear its subtree flags.
+        // 向上标记父 Fiber 未完成，并清空其子树副作用标记与删除列表
         returnFiber.flags |= Incomplete;
         returnFiber.subtreeFlags = NoFlags;
         returnFiber.deletions = null;
       } else {
-        // We've unwound all the way to the root.
+        // 已经回溯到根：本次渲染未能完成
         workInProgressRootExitStatus = RootDidNotComplete;
         workInProgress = null;
         return;
@@ -2037,17 +2149,17 @@ function completeUnitOfWork(unitOfWork: Fiber): void {
 
     const siblingFiber = completedWork.sibling;
     if (siblingFiber !== null) {
-      // If there is more work to do in this returnFiber, do that next.
+      // 还有兄弟节点：转去处理兄弟分支
       workInProgress = siblingFiber;
       return;
     }
-    // Otherwise, return to the parent
+    // 无兄弟：回到父节点，继续在父层级回溯
     completedWork = returnFiber;
-    // Update the next thing we're working on in case something throws.
+    // 发生异常时，保持 workInProgress 指向正在回溯的节点
     workInProgress = completedWork;
   } while (completedWork !== null);
 
-  // We've reached the root.
+  // 回溯到根：若之前仍为进行中，则标记为已完成
   if (workInProgressRootExitStatus === RootInProgress) {
     workInProgressRootExitStatus = RootCompleted;
   }

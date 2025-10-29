@@ -303,10 +303,9 @@ export function reconcileChildren(
   renderLanes: Lanes,
 ) {
   if (current === null) {
-    // If this is a fresh new component that hasn't been rendered yet, we
-    // won't update its child set by applying minimal side-effects. Instead,
-    // we will add them all to the child before it gets rendered. That means
-    // we can optimize this reconciliation pass by not tracking side-effects.
+    // 全新挂载分支：对于还未渲染过的组件，不做“最小副作用”更新，
+    // 而是在渲染前一次性创建全部子 Fiber。
+    // 这意味着本次协调可以跳过副作用跟踪，直接走挂载路径。
     workInProgress.child = mountChildFibers(
       workInProgress,
       null,
@@ -314,12 +313,10 @@ export function reconcileChildren(
       renderLanes,
     );
   } else {
-    // If the current child is the same as the work in progress, it means that
-    // we haven't yet started any work on these children. Therefore, we use
-    // the clone algorithm to create a copy of all the current children.
-
-    // If we had any progressed work already, that is invalid at this point so
-    // let's throw it out.
+    // 更新分支：如果 current.child 与 workInProgress 的子树尚未开始处理，
+    // 使用克隆算法（reconcileChildFibers）在现有子树基础上进行复用/对比，
+    // 为变更的节点创建新 Fiber，未变更的节点进行复用。
+    // 若之前存在“进行中的子工作”（progressed work），此处将作废并重建。
     workInProgress.child = reconcileChildFibers(
       workInProgress,
       current.child,
@@ -1056,6 +1053,14 @@ function markRef(current: Fiber | null, workInProgress: Fiber) {
   }
 }
 
+/**
+ * updateFunctionComponent
+ * 函数组件的更新/挂载入口：执行 hooks 渲染并协调子节点
+ * - 校验 props（dev）→ 解析 legacy context → 准备读取 Context
+ * - 调用 renderWithHooks 执行函数组件（收集/驱动 hooks）
+ * - 根据是否收到更新决定是否 bailout hooks/子树
+ * - 协调子元素生成子 Fiber 并返回第一个 child
+ */
 function updateFunctionComponent(
   current,
   workInProgress,
@@ -1063,67 +1068,24 @@ function updateFunctionComponent(
   nextProps: any,
   renderLanes,
 ) {
-  if (__DEV__) {
-    if (workInProgress.type !== workInProgress.elementType) {
-      // Lazy component props can't be validated in createElement
-      // because they're only guaranteed to be resolved here.
-      const innerPropTypes = Component.propTypes;
-      if (innerPropTypes) {
-        checkPropTypes(
-          innerPropTypes,
-          nextProps, // Resolved props
-          'prop',
-          getComponentNameFromType(Component),
-        );
-      }
-    }
-  }
 
   let context;
   if (!disableLegacyContext) {
+    // 解析 legacy context（未废弃分支）并按消费方掩码进行裁剪
     const unmaskedContext = getUnmaskedContext(workInProgress, Component, true);
     context = getMaskedContext(workInProgress, unmaskedContext);
   }
 
   let nextChildren;
   let hasId;
+  // 为本 Fiber 准备 Context 读取（如 useContext）与 render 阶段追踪
   prepareToReadContext(workInProgress, renderLanes);
   if (enableSchedulingProfiler) {
     markComponentRenderStarted(workInProgress);
   }
   if (__DEV__) {
-    ReactCurrentOwner.current = workInProgress;
-    setIsRendering(true);
-    nextChildren = renderWithHooks(
-      current,
-      workInProgress,
-      Component,
-      nextProps,
-      context,
-      renderLanes,
-    );
-    hasId = checkDidRenderIdHook();
-    if (
-      debugRenderPhaseSideEffectsForStrictMode &&
-      workInProgress.mode & StrictLegacyMode
-    ) {
-      setIsStrictModeForDevtools(true);
-      try {
-        nextChildren = renderWithHooks(
-          current,
-          workInProgress,
-          Component,
-          nextProps,
-          context,
-          renderLanes,
-        );
-        hasId = checkDidRenderIdHook();
-      } finally {
-        setIsStrictModeForDevtools(false);
-      }
-    }
-    setIsRendering(false);
   } else {
+    // 生产环境：单次执行 hooks 渲染
     nextChildren = renderWithHooks(
       current,
       workInProgress,
@@ -1138,17 +1100,20 @@ function updateFunctionComponent(
     markComponentRenderStopped();
   }
 
+  // 更新路径且未收到更新：跳过 hooks 与子树（bailout）
   if (current !== null && !didReceiveUpdate) {
     bailoutHooks(current, workInProgress, renderLanes);
     return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes);
   }
 
+  // 水合期间如使用了 useId，需推入已实体化的 treeId，确保一致 ID
   if (getIsHydrating() && hasId) {
     pushMaterializedTreeId(workInProgress);
   }
 
-  // React DevTools reads this flag.
+  // DevTools 依赖该标记以识别本次渲染已执行过工作
   workInProgress.flags |= PerformedWork;
+  // 协调子元素：根据 nextChildren 生成/复用子 Fiber
   reconcileChildren(current, workInProgress, nextChildren, renderLanes);
   return workInProgress.child;
 }
@@ -1533,6 +1498,14 @@ function mountHostRootWithoutHydrating(
   return workInProgress.child;
 }
 
+/**
+ * updateHostComponent
+ * 宿主组件（如 div/span 等）的更新/挂载：
+ * - 入栈宿主上下文（namespace、事件系统等）
+ * - 首次渲染时尝试匹配可水合的实例（SSR 水合）
+ * - 基于 shouldSetTextContent 判断是否将 children 作为纯文本处理
+ * - 处理 ref 标记并协调子元素
+ */
 function updateHostComponent(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -1552,14 +1525,13 @@ function updateHostComponent(
   const isDirectTextChild = shouldSetTextContent(type, nextProps);
 
   if (isDirectTextChild) {
-    // We special case a direct text child of a host node. This is a common
-    // case. We won't handle it as a reified child. We will instead handle
-    // this in the host environment that also has access to this prop. That
-    // avoids allocating another HostText fiber and traversing it.
+    // 宿主节点的直接文本子节点是常见场景：
+    // 此时不再为其创建独立的 HostText Fiber，而是交由宿主环境直接处理文本，
+    // 以避免额外的 Fiber 分配与遍历成本。
     nextChildren = null;
   } else if (prevProps !== null && shouldSetTextContent(type, prevProps)) {
-    // If we're switching from a direct text child to a normal child, or to
-    // empty, we need to schedule the text content to be reset.
+    // 若从“直接文本子节点”切换为“普通子节点”或“空”，
+    // 需要调度一次文本内容重置（ContentReset）。
     workInProgress.flags |= ContentReset;
   }
 
@@ -3827,29 +3799,22 @@ function attemptEarlyBailoutIfNoScheduledUpdate(
   return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes);
 }
 
+/**
+ * beginWork
+ * 开始阶段：为当前 Fiber 执行渲染前半程（计算子树/调度更新/构造子 Fiber）
+ * - 职责：根据变更（props、context、更新队列等）决定是否继续向下递归
+ * - 可能的路径：
+ *   1) 需要更新：返回下一个子 Fiber（继续向下）
+ *   2) 提前跳过：直接进入 bailout/attemptEarlyBailout 分支
+ * - 结果：返回要继续工作的子 Fiber；若返回 null，表示该 Fiber 无子工作，后续将进入 complete 阶段
+ */
 function beginWork(
   current: Fiber | null,
   workInProgress: Fiber,
   renderLanes: Lanes,
 ): Fiber | null {
-  if (__DEV__) {
-    if (workInProgress._debugNeedsRemount && current !== null) {
-      // This will restart the begin phase with a new fiber.
-      return remountFiber(
-        current,
-        workInProgress,
-        createFiberFromTypeAndProps(
-          workInProgress.type,
-          workInProgress.key,
-          workInProgress.pendingProps,
-          workInProgress._debugOwner || null,
-          workInProgress.mode,
-          workInProgress.lanes,
-        ),
-      );
-    }
-  }
 
+  // 对于已存在的节点（更新路径）：比较旧/新 props 与上下文，决定是否需要更新
   if (current !== null) {
     const oldProps = current.memoizedProps;
     const newProps = workInProgress.pendingProps;
@@ -3857,26 +3822,27 @@ function beginWork(
     if (
       oldProps !== newProps ||
       hasLegacyContextChanged() ||
-      // Force a re-render if the implementation changed due to hot reload:
+      // 开发场景（如热更新）下，组件实现发生变化时需要强制重新渲染
       (__DEV__ ? workInProgress.type !== current.type : false)
     ) {
-      // If props or context changed, mark the fiber as having performed work.
-      // This may be unset if the props are determined to be equal later (memo).
+      // 若 props 或 legacy context 发生变化（或热更新导致实现更换），
+      // 标记该 Fiber 收到更新（didReceiveUpdate = true）。
+      // 注意：如果后续判定 props 实际等价（如 memo），该标记可能被撤销。
       didReceiveUpdate = true;
     } else {
-      // Neither props nor legacy context changes. Check if there's a pending
-      // update or context change.
+      // 否则检查是否存在调度的更新或上下文变化（例如 setState、context 更新）
       const hasScheduledUpdateOrContext = checkScheduledUpdateOrContext(
         current,
         renderLanes,
       );
       if (
         !hasScheduledUpdateOrContext &&
-        // If this is the second pass of an error or suspense boundary, there
-        // may not be work scheduled on `current`, so we check for this flag.
+        // 错误边界或 Suspense 的第二次尝试可能没有在 current 上调度工作，
+        // 因此需要额外检查 DidCapture 标记。
         (workInProgress.flags & DidCapture) === NoFlags
       ) {
-        // No pending updates or context. Bail out now.
+        // 没有待处理更新或上下文变更：直接提前跳过（bailout），
+        // 进入 attemptEarlyBailoutIfNoScheduledUpdate（可能复用子树且不向下递归）。
         didReceiveUpdate = false;
         return attemptEarlyBailoutIfNoScheduledUpdate(
           current,
@@ -3885,45 +3851,48 @@ function beginWork(
         );
       }
       if ((current.flags & ForceUpdateForLegacySuspense) !== NoFlags) {
-        // This is a special case that only exists for legacy mode.
-        // See https://github.com/facebook/react/pull/19216.
+        // 仅存在于 legacy 模式的特殊分支，详见 PR #19216
+        // 仅用于 legacy 模式的特殊分支：强制对 Suspense 边界进行一次更新
         didReceiveUpdate = true;
       } else {
-        // An update was scheduled on this fiber, but there are no new props
-        // nor legacy context. Set this to false. If an update queue or context
-        // consumer produces a changed value, it will set this to true. Otherwise,
-        // the component will assume the children have not changed and bail out.
+        // 虽有调度的更新，但 props/context 未变；
+        // 暂置 didReceiveUpdate=false，若后续队列/上下文消费者产生变化会再置为 true，
+        // 否则可假定子树未变化并在后续 bailout。
         didReceiveUpdate = false;
       }
     }
   } else {
+    // 对于首次挂载（mount 路径）：默认未收到更新
     didReceiveUpdate = false;
 
     if (getIsHydrating() && isForkedChild(workInProgress)) {
-      // Check if this child belongs to a list of muliple children in
-      // its parent.
-      //
-      // In a true multi-threaded implementation, we would render children on
-      // parallel threads. This would represent the beginning of a new render
-      // thread for this subtree.
-      //
-      // We only use this for id generation during hydration, which is why the
-      // logic is located in this special branch.
+      // 判断该子节点是否属于父级中“多个并列子节点”的一员；
+      // 在理想的多线程实现中，子树可能在并行线程上渲染，
+      // 这里代表为该子树开启一条新的渲染路径；
+      // 实际上此逻辑仅在 SSR 水合期间用于 ID 生成，故放在此特殊分支。
+      // 服务端渲染水合场景下，分叉子节点需要推入 treeId，主要用于生成稳定的 id
       const slotIndex = workInProgress.index;
       const numberOfForks = getForksAtLevel(workInProgress);
       pushTreeId(workInProgress, numberOfForks, slotIndex);
     }
   }
 
-  // Before entering the begin phase, clear pending update priority.
-  // TODO: This assumes that we're about to evaluate the component and process
-  // the update queue. However, there's an exception: SimpleMemoComponent
-  // sometimes bails out later in the begin phase. This indicates that we should
-  // move this assignment out of the common path and into each branch.
+  // 进入 begin 阶段前，清空待处理的更新优先级（lanes）。
+  // 注意：这假设我们即将执行组件求值与更新队列处理；
+  // 但 SimpleMemoComponent 有时会在 begin 的后续阶段再早退，
+  // 这意味着更理想的做法是把该赋值下放到各自分支里，而非公共路径。
+  // 进入 begin 阶段前清空本节点的 lanes（待处理更新优先级），
+  // 某些分支（如 SimpleMemo）可能在 begin 后续阶段再退出，这里是通用路径的处理。
   workInProgress.lanes = NoLanes;
 
+  // 根据不同 Fiber.tag 分发到具体更新逻辑：
+  // - 挂载/更新函数/类组件
+  // - 更新宿主节点/文本节点
+  // - 处理 Suspense/Context/Memo/Profiler 等特性节点
   switch (workInProgress.tag) {
     case IndeterminateComponent: {
+      // 未定形组件：首次渲染时还不确定是函数组件还是类组件
+      // 通过调用后根据返回值确定其具体形态并完成挂载
       return mountIndeterminateComponent(
         current,
         workInProgress,
@@ -3932,6 +3901,8 @@ function beginWork(
       );
     }
     case LazyComponent: {
+      // 懒加载组件：通过动态 import() 加载组件类型
+      // 此分支负责解析实际组件并继续挂载
       const elementType = workInProgress.elementType;
       return mountLazyComponent(
         current,
@@ -3941,6 +3912,8 @@ function beginWork(
       );
     }
     case FunctionComponent: {
+      // 函数组件：无实例，使用 hooks 进行状态与副作用管理
+      // 计算渲染结果并为子元素创建 Fiber
       const Component = workInProgress.type;
       const unresolvedProps = workInProgress.pendingProps;
       const resolvedProps =
@@ -3956,6 +3929,8 @@ function beginWork(
       );
     }
     case ClassComponent: {
+      // 类组件：存在实例（this），支持生命周期
+      // 处理更新队列、生命周期并渲染子树
       const Component = workInProgress.type;
       const unresolvedProps = workInProgress.pendingProps;
       const resolvedProps =
@@ -3971,16 +3946,24 @@ function beginWork(
       );
     }
     case HostRoot:
+      // 宿主根节点：应用树的根（如 ReactDOMRoot）
+      // 处理更新队列并协调子树
       return updateHostRoot(current, workInProgress, renderLanes);
     case HostComponent:
+      // 宿主组件：原生节点（如 div、span）
+      // 处理属性/事件/children 的 diff
       return updateHostComponent(current, workInProgress, renderLanes);
     case HostText:
+      // 宿主文本节点：纯文本内容
       return updateHostText(current, workInProgress);
     case SuspenseComponent:
+      // Suspense 边界：控制数据加载/延迟渲染，支持 fallback
       return updateSuspenseComponent(current, workInProgress, renderLanes);
     case HostPortal:
+      // Portal：将子树渲染到另一个容器
       return updatePortalComponent(current, workInProgress, renderLanes);
     case ForwardRef: {
+      // ForwardRef：透传 ref 给子组件
       const type = workInProgress.type;
       const unresolvedProps = workInProgress.pendingProps;
       const resolvedProps =
@@ -3996,19 +3979,25 @@ function beginWork(
       );
     }
     case Fragment:
+      // Fragment：不引入额外 DOM 的分组容器
       return updateFragment(current, workInProgress, renderLanes);
     case Mode:
+      // Mode：控制不同模式（如严格模式），不产生可见 UI
       return updateMode(current, workInProgress, renderLanes);
     case Profiler:
+      // Profiler：性能分析边界，用于收集渲染开销
       return updateProfiler(current, workInProgress, renderLanes);
     case ContextProvider:
+      // Context Provider：提供上下文值给后代消费者
       return updateContextProvider(current, workInProgress, renderLanes);
     case ContextConsumer:
+      // Context Consumer：订阅并读取最近的 Provider 的值
       return updateContextConsumer(current, workInProgress, renderLanes);
     case MemoComponent: {
+      // React.memo 组件：基于 props 的浅比较来跳过渲染
       const type = workInProgress.type;
       const unresolvedProps = workInProgress.pendingProps;
-      // Resolve outer props first, then resolve inner props.
+      // 先解析外层 Memo 包裹的默认属性，再解析内部组件的默认属性
       let resolvedProps = resolveDefaultProps(type, unresolvedProps);
       if (__DEV__) {
         if (workInProgress.type !== workInProgress.elementType) {
@@ -4033,6 +4022,7 @@ function beginWork(
       );
     }
     case SimpleMemoComponent: {
+      // 简化的 Memo 组件：与 MemoComponent 类似但路径更短
       return updateSimpleMemoComponent(
         current,
         workInProgress,
@@ -4042,6 +4032,7 @@ function beginWork(
       );
     }
     case IncompleteClassComponent: {
+      // 未完成的类组件：上次渲染过程中抛错/中断，进行补挂载路径
       const Component = workInProgress.type;
       const unresolvedProps = workInProgress.pendingProps;
       const resolvedProps =
@@ -4057,18 +4048,22 @@ function beginWork(
       );
     }
     case SuspenseListComponent: {
+      // SuspenseList：协调多个 Suspense 的显示顺序与揭示策略
       return updateSuspenseListComponent(current, workInProgress, renderLanes);
     }
     case ScopeComponent: {
+      // Scope：实验性 API，提供对一组子树的作用域访问
       if (enableScopeAPI) {
         return updateScopeComponent(current, workInProgress, renderLanes);
       }
       break;
     }
     case OffscreenComponent: {
+      // Offscreen：控制子树可见性/挂起状态，支持隐藏但保留状态
       return updateOffscreenComponent(current, workInProgress, renderLanes);
     }
     case LegacyHiddenComponent: {
+      // LegacyHidden：旧版隐藏机制，类似 Offscreen 的前身
       if (enableLegacyHidden) {
         return updateLegacyHiddenComponent(
           current,
@@ -4079,12 +4074,14 @@ function beginWork(
       break;
     }
     case CacheComponent: {
+      // Cache：实验性缓存边界，缓存子树渲染结果
       if (enableCache) {
         return updateCacheComponent(current, workInProgress, renderLanes);
       }
       break;
     }
     case TracingMarkerComponent: {
+      // Transition Tracing Marker：用于过渡追踪的标记节点
       if (enableTransitionTracing) {
         return updateTracingMarkerComponent(
           current,

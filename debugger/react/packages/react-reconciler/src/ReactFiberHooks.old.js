@@ -370,6 +370,14 @@ function areHookInputsEqual(
   return true;
 }
 
+/**
+ * renderWithHooks
+ * 使用 hooks 渲染函数组件：
+ * 1) 绑定正确的 Dispatcher（首次渲染使用挂载版，更新使用更新版）
+ * 2) 运行组件函数以收集 hooks（state/effect/context 等）
+ * 3) 处理渲染阶段更新（render-phase updates）的重渲染循环（上限 RE_RENDER_LIMIT）
+ * 4) 清理渲染期的全局指针并返回 children
+ */
 export function renderWithHooks<Props, SecondArg>(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -381,61 +389,30 @@ export function renderWithHooks<Props, SecondArg>(
   renderLanes = nextRenderLanes;
   currentlyRenderingFiber = workInProgress;
 
-  if (__DEV__) {
-    hookTypesDev =
-      current !== null
-        ? ((current._debugHookTypes: any): Array<HookType>)
-        : null;
-    hookTypesUpdateIndexDev = -1;
-    // Used for hot reloading:
-    ignorePreviousDependencies =
-      current !== null && current.type !== workInProgress.type;
-  }
-
   workInProgress.memoizedState = null;
   workInProgress.updateQueue = null;
   workInProgress.lanes = NoLanes;
 
-  // The following should have already been reset
+  // 以下状态按理已在外层被重置：
   // currentHook = null;
   // workInProgressHook = null;
 
+  // 渲染期更新开关与本地 ID 计数器：
   // didScheduleRenderPhaseUpdate = false;
   // localIdCounter = 0;
 
-  // TODO Warn if no hooks are used at all during mount, then some are used during update.
-  // Currently we will identify the update render as a mount because memoizedState === null.
-  // This is tricky because it's valid for certain types of components (e.g. React.lazy)
-
-  // Using memoizedState to differentiate between mount/update only works if at least one stateful hook is used.
-  // Non-stateful hooks (e.g. context) don't get added to memoizedState,
-  // so memoizedState would be null during updates and mounts.
-  if (__DEV__) {
-    if (current !== null && current.memoizedState !== null) {
-      ReactCurrentDispatcher.current = HooksDispatcherOnUpdateInDEV;
-    } else if (hookTypesDev !== null) {
-      // This dispatcher handles an edge case where a component is updating,
-      // but no stateful hooks have been used.
-      // We want to match the production code behavior (which will use HooksDispatcherOnMount),
-      // but with the extra DEV validation to ensure hooks ordering hasn't changed.
-      // This dispatcher does that.
-      ReactCurrentDispatcher.current = HooksDispatcherOnMountWithHookTypesInDEV;
-    } else {
-      ReactCurrentDispatcher.current = HooksDispatcherOnMountInDEV;
-    }
-  } else {
-    ReactCurrentDispatcher.current =
-      current === null || current.memoizedState === null
-        ? HooksDispatcherOnMount
-        : HooksDispatcherOnUpdate;
-  }
+  // 选择 Dispatcher：根据是否有 memoizedState 来区分挂载/更新
+  ReactCurrentDispatcher.current =
+    current === null || current.memoizedState === null
+      ? HooksDispatcherOnMount
+      : HooksDispatcherOnUpdate;
 
   let children = Component(props, secondArg);
 
-  // Check if there was a render phase update
+  // 检查是否发生了渲染阶段更新（render phase update）
   if (didScheduleRenderPhaseUpdateDuringThisPass) {
-    // Keep rendering in a loop for as long as render phase updates continue to
-    // be scheduled. Use a counter to prevent infinite loops.
+    // 只要渲染阶段更新持续调度，就循环重新渲染；
+    // 使用计数器防止出现无限重渲染。
     let numberOfReRenders: number = 0;
     do {
       didScheduleRenderPhaseUpdateDuringThisPass = false;
@@ -449,43 +426,25 @@ export function renderWithHooks<Props, SecondArg>(
       }
 
       numberOfReRenders += 1;
-      if (__DEV__) {
-        // Even when hot reloading, allow dependencies to stabilize
-        // after first render to prevent infinite render phase updates.
-        ignorePreviousDependencies = false;
-      }
 
-      // Start over from the beginning of the list
+      // 重置 Hook 游标，从头重新执行
       currentHook = null;
       workInProgressHook = null;
-
       workInProgress.updateQueue = null;
 
-      if (__DEV__) {
-        // Also validate hook order for cascading updates.
-        hookTypesUpdateIndexDev = -1;
-      }
-
-      ReactCurrentDispatcher.current = __DEV__
-        ? HooksDispatcherOnRerenderInDEV
-        : HooksDispatcherOnRerender;
+      // 重渲染期间使用 Rerender Dispatcher（允许在渲染期再次更新）
+      ReactCurrentDispatcher.current = HooksDispatcherOnRerender;
 
       children = Component(props, secondArg);
     } while (didScheduleRenderPhaseUpdateDuringThisPass);
   }
 
-  // We can assume the previous dispatcher is always this one, since we set it
-  // at the beginning of the render phase and there's no re-entrance.
+  // 可以假设上一个 Dispatcher 一定是 ContextOnlyDispatcher，
+  // 因为我们在渲染阶段开始时设置且不会重入。
   ReactCurrentDispatcher.current = ContextOnlyDispatcher;
 
-  if (__DEV__) {
-    workInProgress._debugHookTypes = hookTypesDev;
-  }
-
-  // This check uses currentHook so that it works the same in DEV and prod bundles.
-  // hookTypesDev could catch more cases (e.g. context) but only in DEV bundles.
-  const didRenderTooFewHooks =
-    currentHook !== null && currentHook.next !== null;
+  // 一致性检查：确保执行的 Hook 数量不小于上次（使用链表指针判断）
+  const didRenderTooFewHooks = currentHook !== null && currentHook.next !== null;
 
   renderLanes = NoLanes;
   currentlyRenderingFiber = (null: any);
@@ -493,35 +452,8 @@ export function renderWithHooks<Props, SecondArg>(
   currentHook = null;
   workInProgressHook = null;
 
-  if (__DEV__) {
-    currentHookNameInDev = null;
-    hookTypesDev = null;
-    hookTypesUpdateIndexDev = -1;
-
-    // Confirm that a static flag was not added or removed since the last
-    // render. If this fires, it suggests that we incorrectly reset the static
-    // flags in some other part of the codebase. This has happened before, for
-    // example, in the SuspenseList implementation.
-    if (
-      current !== null &&
-      (current.flags & StaticMaskEffect) !==
-        (workInProgress.flags & StaticMaskEffect) &&
-      // Disable this warning in legacy mode, because legacy Suspense is weird
-      // and creates false positives. To make this work in legacy mode, we'd
-      // need to mark fibers that commit in an incomplete state, somehow. For
-      // now I'll disable the warning that most of the bugs that would trigger
-      // it are either exclusive to concurrent mode or exist in both.
-      (current.mode & ConcurrentMode) !== NoMode
-    ) {
-      console.error(
-        'Internal React error: Expected static flag was missing. Please ' +
-          'notify the React team.',
-      );
-    }
-  }
-
   didScheduleRenderPhaseUpdate = false;
-  // This is reset by checkDidRenderIdHook
+  // 由 checkDidRenderIdHook 在外部重置 localIdCounter
   // localIdCounter = 0;
 
   if (didRenderTooFewHooks) {
@@ -531,23 +463,15 @@ export function renderWithHooks<Props, SecondArg>(
     );
   }
 
-  if (enableLazyContextPropagation) {
-    if (current !== null) {
-      if (!checkIfWorkInProgressReceivedUpdate()) {
-        // If there were no changes to props or state, we need to check if there
-        // was a context change. We didn't already do this because there's no
-        // 1:1 correspondence between dependencies and hooks. Although, because
-        // there almost always is in the common case (`readContext` is an
-        // internal API), we could compare in there. OTOH, we only hit this case
-        // if everything else bails out, so on the whole it might be better to
-        // keep the comparison out of the common path.
-        const currentDependencies = current.dependencies;
-        if (
-          currentDependencies !== null &&
-          checkIfContextChanged(currentDependencies)
-        ) {
-          markWorkInProgressReceivedUpdate();
-        }
+  if (enableLazyContextPropagation && current !== null) {
+    if (!checkIfWorkInProgressReceivedUpdate()) {
+      // 当 props/state 均未变化时，仍需检查 Context 是否变化
+      const currentDependencies = current.dependencies;
+      if (
+        currentDependencies !== null &&
+        checkIfContextChanged(currentDependencies)
+      ) {
+        markWorkInProgressReceivedUpdate();
       }
     }
   }
@@ -555,9 +479,9 @@ export function renderWithHooks<Props, SecondArg>(
 }
 
 export function checkDidRenderIdHook() {
-  // This should be called immediately after every renderWithHooks call.
-  // Conceptually, it's part of the return value of renderWithHooks; it's only a
-  // separate function to avoid using an array tuple.
+  // 该函数应在每次 renderWithHooks 调用后立刻调用。
+  // 从概念上看，它属于 renderWithHooks 的返回结果的一部分；
+  // 只是为了避免返回元组而拆分成单独函数。
   const didRenderIdHook = localIdCounter !== 0;
   localIdCounter = 0;
   return didRenderIdHook;
@@ -569,8 +493,7 @@ export function bailoutHooks(
   lanes: Lanes,
 ) {
   workInProgress.updateQueue = current.updateQueue;
-  // TODO: Don't need to reset the flags here, because they're reset in the
-  // complete phase (bubbleProperties).
+  // TODO：此处无需重置 flags，因为会在 complete 阶段（bubbleProperties）统一重置。
   if (
     __DEV__ &&
     enableStrictEffects &&
@@ -589,19 +512,17 @@ export function bailoutHooks(
 }
 
 export function resetHooksAfterThrow(): void {
-  // We can assume the previous dispatcher is always this one, since we set it
-  // at the beginning of the render phase and there's no re-entrance.
+  // 可以假设上一个 Dispatcher 一定是 ContextOnlyDispatcher，
+  // 因为我们在渲染阶段开始时设置且不会重入。
   ReactCurrentDispatcher.current = ContextOnlyDispatcher;
 
   if (didScheduleRenderPhaseUpdate) {
-    // There were render phase updates. These are only valid for this render
-    // phase, which we are now aborting. Remove the updates from the queues so
-    // they do not persist to the next render. Do not remove updates from hooks
-    // that weren't processed.
+    // 存在渲染阶段更新。此类更新只对当前渲染阶段有效，
+    // 现在我们将中止本次渲染：需从队列移除这些更新，避免它们泄漏到下一次渲染；
+    // 但不要移除尚未处理到的 Hook 的更新。
     //
-    // Only reset the updates from the queue if it has a clone. If it does
-    // not have a clone, that means it wasn't processed, and the updates were
-    // scheduled before we entered the render phase.
+    // 仅当队列存在克隆时才重置其中的更新；若没有克隆，说明该 Hook 未被处理，
+    // 且这些更新是在进入渲染阶段之前就已调度。
     let hook: Hook | null = currentlyRenderingFiber.memoizedState;
     while (hook !== null) {
       const queue = hook.queue;
