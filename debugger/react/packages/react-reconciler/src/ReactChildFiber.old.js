@@ -787,7 +787,7 @@ function ChildReconciler(shouldTrackSideEffects) {
       }
       
       // 尝试更新当前槽位：比较 oldFiber 与 newChildren[newIdx]
-      const newFiber = updateSlot(
+      const newFiber = updateSlot( //比对key
         returnFiber,
         oldFiber,
         newChildren[newIdx],

@@ -407,6 +407,7 @@ export function renderWithHooks<Props, SecondArg>(
       ? HooksDispatcherOnMount
       : HooksDispatcherOnUpdate;
 
+  // 执行组件函数
   let children = Component(props, secondArg);
 
   // 检查是否发生了渲染阶段更新（render phase update）
@@ -574,12 +575,22 @@ function mountWorkInProgressHook(): Hook {
   return workInProgressHook;
 }
 
+/**
+ * updateWorkInProgressHook
+ * 渲染期间获取/构建“进行中（work-in-progress）”的 Hook 结点。
+ * 适用场景：
+ * - 普通更新渲染
+ * - 渲染阶段更新导致的同一轮“重渲染”（rerender）
+ *
+ * 基本思路：
+ * - 优先复用已存在的 WIP Hook（上一轮渲染已创建的链表结点）
+ * - 否则从 current Hook 克隆一个新结点，挂到 WIP 链表尾部
+ * - 当走到“基线列表（base list）”尾部时，挂载路径会切换到挂载用的 Dispatcher
+ */
 function updateWorkInProgressHook(): Hook {
-  // This function is used both for updates and for re-renders triggered by a
-  // render phase update. It assumes there is either a current hook we can
-  // clone, or a work-in-progress hook from a previous render pass that we can
-  // use as a base. When we reach the end of the base list, we must switch to
-  // the dispatcher used for mounts.
+  // 该函数既用于更新，也用于“渲染阶段更新”触发的重渲染。
+  // 假设要么存在可克隆的 current hook，要么存在可复用的 WIP hook。
+  // 当到达基线列表末尾时，需要切换到挂载用的 Dispatcher。
   let nextCurrentHook: null | Hook;
   if (currentHook === null) {
     const current = currentlyRenderingFiber.alternate;
@@ -600,16 +611,17 @@ function updateWorkInProgressHook(): Hook {
   }
 
   if (nextWorkInProgressHook !== null) {
-    // There's already a work-in-progress. Reuse it.
+    // 已存在可复用的 WIP Hook：直接复用并前进游标。
     workInProgressHook = nextWorkInProgressHook;
     nextWorkInProgressHook = workInProgressHook.next;
 
     currentHook = nextCurrentHook;
   } else {
-    // Clone from the current hook.
+    // 从 current hook 克隆一个新 WIP Hook。
 
     if (nextCurrentHook === null) {
-      throw new Error('Rendered more hooks than during the previous render.');
+      // 当前渲染调用的 Hook 数量超过了上一次渲染（顺序/条件错误）。
+      throw new Error('本次渲染调用的 Hook 数量多于上一次渲染。');
     }
 
     currentHook = nextCurrentHook;
@@ -625,10 +637,10 @@ function updateWorkInProgressHook(): Hook {
     };
 
     if (workInProgressHook === null) {
-      // This is the first hook in the list.
+      // 这是本次渲染 WIP 链表的第一个 Hook 结点。
       currentlyRenderingFiber.memoizedState = workInProgressHook = newHook;
     } else {
-      // Append to the end of the list.
+      // 追加到 WIP Hook 链表尾部。
       workInProgressHook = workInProgressHook.next = newHook;
     }
   }
@@ -676,6 +688,18 @@ function mountReducer<S, I, A>(
   return [hook.memoizedState, dispatch];
 }
 
+/**
+ * updateReducer
+ * 对应 useReducer 的“更新阶段”实现（非首次挂载）。
+ * 核心流程：
+ * 1) 合并 pendingQueue 到 baseQueue（形成一条需要本次处理的环形更新链）
+ * 2) 迭代 baseQueue：
+ *    - 若当前更新的优先级不足（不在本次 renderLanes 中），跳过并克隆到新的 baseQueue（延后到未来）
+ *    - 否则按顺序处理：对 eagerState 直接使用预计算状态，否则通过 reducer 计算新状态
+ *    - 维护新的 baseState/baseQueue（用于下次渲染的“基线”）与 lanes 标记
+ * 3) 对比新旧 state，标记本 Fiber 接收到更新（影响 bailout 等逻辑）
+ * 4) 写回 hook 的 memoizedState/baseState/baseQueue，并返回 [state, dispatch]
+ */
 function updateReducer<S, I, A>(
   reducer: (S, A) => S,
   initialArg: I,
@@ -684,47 +708,30 @@ function updateReducer<S, I, A>(
   const hook = updateWorkInProgressHook();
   const queue = hook.queue;
 
-  if (queue === null) {
-    throw new Error(
-      'Should have a queue. This is likely a bug in React. Please file an issue.',
-    );
-  }
-
   queue.lastRenderedReducer = reducer;
 
   const current: Hook = (currentHook: any);
 
-  // The last rebase update that is NOT part of the base state.
+  // 最后一个“重基线（rebase）更新”（不属于 baseState 的那部分）。
   let baseQueue = current.baseQueue;
 
-  // The last pending update that hasn't been processed yet.
+  // 尚未被处理的“待处理更新队列”的末尾节点。
   const pendingQueue = queue.pending;
   if (pendingQueue !== null) {
-    // We have new updates that haven't been processed yet.
-    // We'll add them to the base queue.
+    // 存在新的待处理更新：把它们合并进 baseQueue（两条环形队列接驳）。
     if (baseQueue !== null) {
-      // Merge the pending queue and the base queue.
+      // 将 pending 与 base 两条环形链首尾相接，形成一条待处理链。
       const baseFirst = baseQueue.next;
       const pendingFirst = pendingQueue.next;
       baseQueue.next = pendingFirst;
       pendingQueue.next = baseFirst;
-    }
-    if (__DEV__) {
-      if (current.baseQueue !== baseQueue) {
-        // Internal invariant that should never happen, but feasibly could in
-        // the future if we implement resuming, or some form of that.
-        console.error(
-          'Internal error: Expected work-in-progress queue to be a clone. ' +
-            'This is a bug in React.',
-        );
-      }
     }
     current.baseQueue = baseQueue = pendingQueue;
     queue.pending = null;
   }
 
   if (baseQueue !== null) {
-    // We have a queue to process.
+    // 存在需要处理的更新队列。
     const first = baseQueue.next;
     let newState = current.baseState;
 
@@ -733,23 +740,19 @@ function updateReducer<S, I, A>(
     let newBaseQueueLast = null;
     let update = first;
     do {
-      // An extra OffscreenLane bit is added to updates that were made to
-      // a hidden tree, so that we can distinguish them from updates that were
-      // already there when the tree was hidden.
+      // 若更新发生在“隐藏树（Offscreen）”中，会带有 OffscreenLane 位，
+      // 以区分和隐藏前就已存在的更新。
       const updateLane = removeLanes(update.lane, OffscreenLane);
       const isHiddenUpdate = updateLane !== update.lane;
 
-      // Check if this update was made while the tree was hidden. If so, then
-      // it's not a "base" update and we should disregard the extra base lanes
-      // that were added to renderLanes when we entered the Offscreen tree.
+      // 若为隐藏期更新，则它不是“基线更新”；需忽略进入 Offscreen 时附加的扩展基线车道。
       const shouldSkipUpdate = isHiddenUpdate
         ? !isSubsetOfLanes(getWorkInProgressRootRenderLanes(), updateLane)
         : !isSubsetOfLanes(renderLanes, updateLane);
 
       if (shouldSkipUpdate) {
-        // Priority is insufficient. Skip this update. If this is the first
-        // skipped update, the previous update/state is the new base
-        // update/state.
+        // 优先级不足：跳过该更新。
+        // 若这是第一个被跳过的更新，则“之前的更新/状态”成为新的 base 更新/状态。
         const clone: Update<S, A> = {
           lane: updateLane,
           action: update.action,
@@ -763,22 +766,20 @@ function updateReducer<S, I, A>(
         } else {
           newBaseQueueLast = newBaseQueueLast.next = clone;
         }
-        // Update the remaining priority in the queue.
-        // TODO: Don't need to accumulate this. Instead, we can remove
-        // renderLanes from the original lanes.
+        // 更新队列上剩余的优先级标记。
+        // TODO：不必累计；可直接从原 lanes 中移除 renderLanes。
         currentlyRenderingFiber.lanes = mergeLanes(
           currentlyRenderingFiber.lanes,
           updateLane,
         );
         markSkippedUpdateLanes(updateLane);
       } else {
-        // This update does have sufficient priority.
+        // 该更新具备足够的优先级：予以处理。
 
         if (newBaseQueueLast !== null) {
           const clone: Update<S, A> = {
-            // This update is going to be committed so we never want uncommit
-            // it. Using NoLane works because 0 is a subset of all bitmasks, so
-            // this will never be skipped by the check above.
+            // 该更新将被提交，不应再被“反提交”。
+            // 使用 NoLane（0 是任何位掩码的子集）可确保其不再被跳过。
             lane: NoLane,
             action: update.action,
             hasEagerState: update.hasEagerState,
@@ -788,10 +789,9 @@ function updateReducer<S, I, A>(
           newBaseQueueLast = newBaseQueueLast.next = clone;
         }
 
-        // Process this update.
+        // 处理该更新：
         if (update.hasEagerState) {
-          // If this update is a state update (not a reducer) and was processed eagerly,
-          // we can use the eagerly computed state
+          // 若这是“状态更新（非 reducer）”且已预计算 eagerState，直接复用该状态。
           newState = ((update.eagerState: any): S);
         } else {
           const action = update.action;
@@ -807,8 +807,7 @@ function updateReducer<S, I, A>(
       newBaseQueueLast.next = (newBaseQueueFirst: any);
     }
 
-    // Mark that the fiber performed work, but only if the new state is
-    // different from the current state.
+    // 若新旧状态不相等，标记本 Fiber 在本次渲染中“确实做了工作”。
     if (!is(newState, hook.memoizedState)) {
       markWorkInProgressReceivedUpdate();
     }
@@ -821,8 +820,7 @@ function updateReducer<S, I, A>(
   }
 
   if (baseQueue === null) {
-    // `queue.lanes` is used for entangling transitions. We can set it back to
-    // zero once the queue is empty.
+    // queue.lanes 用于“缠结（entangle）”多个 transitions；队列清空后可重置为 0。
     queue.lanes = NoLanes;
   }
 
@@ -1592,6 +1590,20 @@ function mountEffectImpl(fiberFlags, hookFlags, create, deps): void {
   );
 }
 
+/**
+ * updateEffectImpl
+ * useEffect/useLayoutEffect 更新阶段的通用实现：
+ * - 对比依赖（deps），在依赖未变更时跳过「产生副作用」标记，仅保留 effect 记录；
+ * - 在依赖变更或首次更新（有 currentHook 但依赖不同/为 null）时，
+ *   给 Fiber 打上相应 flag（如 Passive/Layout 等），并为该 effect 叠加 HookHasEffect，
+ *   以便提交阶段执行 destroy → create。
+ *
+ * 参数：
+ * - fiberFlags：打到 Fiber 上的标志（如 Passive/Update 等），决定提交阶段的子阶段执行
+ * - hookFlags：effect 自身的标志（Passive/Layout），区分被动/布局类 effect
+ * - create：effect 的创建函数
+ * - deps：依赖数组；undefined 视为「无依赖信息」→ 退化为每次都执行；null 表示无依赖每次执行
+ */
 function updateEffectImpl(fiberFlags, hookFlags, create, deps): void {
   const hook = updateWorkInProgressHook();
   const nextDeps = deps === undefined ? null : deps;
@@ -1603,14 +1615,19 @@ function updateEffectImpl(fiberFlags, hookFlags, create, deps): void {
     if (nextDeps !== null) {
       const prevDeps = prevEffect.deps;
       if (areHookInputsEqual(nextDeps, prevDeps)) {
+        // 依赖未变更：不添加 HookHasEffect，提交阶段不会执行 create/destroy，
+        // 仅保留 effect 记录用于下次对比。
         hook.memoizedState = pushEffect(hookFlags, create, destroy, nextDeps);
         return;
       }
     }
   }
 
+  // 依赖变更或每次都需执行：
+  // 1) 给 Fiber 打上对应的 fiberFlags，确保提交阶段会进入相应子阶段
   currentlyRenderingFiber.flags |= fiberFlags;
 
+  // 2) 给该 effect 打上 HookHasEffect，表示需要在提交阶段执行副作用（destroy → create）
   hook.memoizedState = pushEffect(
     HookHasEffect | hookFlags,
     create,

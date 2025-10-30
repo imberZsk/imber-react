@@ -1116,18 +1116,31 @@ export function queueRecoverableErrors(errors: Array<CapturedValue<mixed>>) {
   }
 }
 
+/**
+ * finishConcurrentRender
+ * 并发渲染完成后的收尾与提交决策：根据本次渲染的退出状态（exitStatus）决定是否立刻 commit、
+ * 延迟 commit（例如显示占位回退 UI 的时机），或调度重试/超时等。
+ *
+ * 关键点：
+ * - RootErrored：本次报错且已尝试重试，直接提交（让错误边界在 commit 阶段生效）。
+ * - RootSuspended：渲染被 Suspense 挂起。若仅包含重试车道且不在 act() 内，可能延迟提交占位；
+ *   否则立即提交（回退 UI）。
+ * - RootSuspendedWithDelay：被挂起但属于“延迟”情形（JND 策略），对非 transition 的情况，
+ *   计算 Just Noticeable Difference 延迟后再提交占位；transition 直接无限期等待更多数据。
+ * - RootCompleted：渲染完成，直接提交。
+ */
 function finishConcurrentRender(root, exitStatus, lanes) {
   switch (exitStatus) {
     case RootInProgress:
     case RootFatalErrored: {
       throw new Error('Root did not complete. This is a bug in React.');
     }
-    // Flow knows about invariant, so it complains if I add a break
-    // statement, but eslint doesn't know about invariant, so it complains
-    // if I do. eslint-disable-next-line no-fallthrough
+    // Flow 知道 invariant，因此如果这里加 break 会报错；
+    // 但 eslint 并不理解这一点，所以会抱怨没有 break。
+    // eslint-disable-next-line no-fallthrough
     case RootErrored: {
-      // We should have already attempted to retry this tree. If we reached
-      // this point, it errored again. Commit it.
+      // 此时应当已经尝试过对该树进行重试；若仍走到这里，说明再次报错。
+      // 直接提交，让错误边界在提交阶段处理。
       commitRoot(
         root,
         workInProgressRootRecoverableErrors,
@@ -1138,39 +1151,34 @@ function finishConcurrentRender(root, exitStatus, lanes) {
     case RootSuspended: {
       markRootSuspended(root, lanes);
 
-      // We have an acceptable loading state. We need to figure out if we
-      // should immediately commit it or wait a bit.
+      // 此时拥有一个可接受的“加载中”状态，需要判定：立刻提交占位，还是等待一段时间。
 
       if (
         includesOnlyRetries(lanes) &&
-        // do not delay if we're inside an act() scope
+        // 如果处在 act() 作用域内，不要延迟
         !shouldForceFlushFallbacksInDEV()
       ) {
-        // This render only included retries, no updates. Throttle committing
-        // retries so that we don't show too many loading states too quickly.
+        // 该次渲染只包含重试车道，不含普通更新。
+        // 通过节流延迟提交，避免过于频繁地显示加载态。
         const msUntilTimeout =
           globalMostRecentFallbackTime + FALLBACK_THROTTLE_MS - now();
-        // Don't bother with a very short suspense time.
+        // 非常短的延迟无需等待。
         if (msUntilTimeout > 10) {
           const nextLanes = getNextLanes(root, NoLanes);
           if (nextLanes !== NoLanes) {
-            // There's additional work on this root.
+            // Root 上仍有其它工作要做，先退出不提交。
             break;
           }
           const suspendedLanes = root.suspendedLanes;
           if (!isSubsetOfLanes(suspendedLanes, lanes)) {
-            // We should prefer to render the fallback of at the last
-            // suspended level. Ping the last suspended level to try
-            // rendering it again.
-            // FIXME: What if the suspended lanes are Idle? Should not restart.
+            // 优先渲染最近一次挂起层级的回退；对最后一次挂起层级进行 ping 尝试重渲染。
+            // FIXME：若挂起车道是 Idle，理论上不应重启。
             const eventTime = requestEventTime();
             markRootPinged(root, suspendedLanes, eventTime);
             break;
           }
-
-          // The render is suspended, it hasn't timed out, and there's no
-          // lower priority work to do. Instead of committing the fallback
-          // immediately, wait for more data to arrive.
+          // 渲染已被挂起，尚未超时，且不存在更低优先级的工作。
+          // 不要立刻提交回退 UI，等待更多数据到来。
           root.timeoutHandle = scheduleTimeout(
             commitRoot.bind(
               null,
@@ -1183,7 +1191,7 @@ function finishConcurrentRender(root, exitStatus, lanes) {
           break;
         }
       }
-      // The work expired. Commit immediately.
+      // 工作已过期：立刻提交。
       commitRoot(
         root,
         workInProgressRootRecoverableErrors,
@@ -1195,29 +1203,24 @@ function finishConcurrentRender(root, exitStatus, lanes) {
       markRootSuspended(root, lanes);
 
       if (includesOnlyTransitions(lanes)) {
-        // This is a transition, so we should exit without committing a
-        // placeholder and without scheduling a timeout. Delay indefinitely
-        // until we receive more data.
+        // 这是一次过渡（transition）：不提交占位、不设置超时，
+        // 直接无限期等待更多数据到来。
         break;
       }
 
       if (!shouldForceFlushFallbacksInDEV()) {
-        // This is not a transition, but we did trigger an avoided state.
-        // Schedule a placeholder to display after a short delay, using the Just
-        // Noticeable Difference.
-        // TODO: Is the JND optimization worth the added complexity? If this is
-        // the only reason we track the event time, then probably not.
-        // Consider removing.
+        // 非 transition，但进入了“应避免展示回退 UI”的状态：
+        // 使用 JND（人眼刚可察觉差异）策略，短暂延迟后再显示占位。
+        // TODO：JND 带来的复杂度是否值得？若只是为记录事件时间，可能并不值，考虑移除。
 
         const mostRecentEventTime = getMostRecentEventTime(root, lanes);
         const eventTimeMs = mostRecentEventTime;
         const timeElapsedMs = now() - eventTimeMs;
         const msUntilTimeout = jnd(timeElapsedMs) - timeElapsedMs;
 
-        // Don't bother with a very short suspense time.
+        // 非常短的延迟无需等待。
         if (msUntilTimeout > 10) {
-          // Instead of committing the fallback immediately, wait for more data
-          // to arrive.
+          // 不要立刻提交回退 UI，等待更多数据到来。
           root.timeoutHandle = scheduleTimeout(
             commitRoot.bind(
               null,
@@ -1231,7 +1234,7 @@ function finishConcurrentRender(root, exitStatus, lanes) {
         }
       }
 
-      // Commit the placeholder.
+      // 提交占位回退 UI。
       commitRoot(
         root,
         workInProgressRootRecoverableErrors,
@@ -1240,7 +1243,7 @@ function finishConcurrentRender(root, exitStatus, lanes) {
       break;
     }
     case RootCompleted: {
-      // The work completed. Ready to commit.
+      // 渲染完成：准备提交。
       commitRoot(
         root,
         workInProgressRootRecoverableErrors,
@@ -2165,13 +2168,23 @@ function completeUnitOfWork(unitOfWork: Fiber): void {
   }
 }
 
+/**
+ * commitRoot
+ * 提交阶段入口：在提交前暂存并设置合适的批量配置与更新优先级，
+ * 然后调用 commitRootImpl 执行实际的提交（mutation/layout/passive 等），
+ * 最后在 finally 中恢复之前的批量配置与优先级。
+ *
+ * 关键点：
+ * - 将当前批量的 Transition 清空（提交不处于某个 Transition 内），提交后恢复。
+ * - 将当前更新优先级临时提升为 DiscreteEventPriority，确保提交期的更新有正确优先级。
+ * - 通过 try/finally 确保无论提交是否抛错，都能恢复现场（prevTransition/previousUpdateLanePriority）。
+ */
 function commitRoot(
   root: FiberRoot,
   recoverableErrors: null | Array<CapturedValue<mixed>>,
   transitions: Array<Transition> | null,
 ) {
-  // TODO: This no longer makes any sense. We already wrap the mutation and
-  // layout phases. Should be able to remove.
+  // TODO：这里的包裹已无太大意义，因为我们已分别包裹了 mutation 与 layout 阶段；可考虑移除。
   const previousUpdateLanePriority = getCurrentUpdatePriority();
   const prevTransition = ReactCurrentBatchConfig.transition;
 
@@ -2192,6 +2205,30 @@ function commitRoot(
   return null;
 }
 
+/**
+ * commitRootImpl
+ * 提交阶段的核心实现：在渲染完成后，按阶段（before-mutation → mutation → layout → passive）
+ * 处理整棵 Fiber 树的副作用，并切换 current 树、调度被动副作用与后续工作。
+ *
+ * 执行顺序与要点：
+ * 1) 预清理与校验：先彻底冲刷遗留的被动副作用，校验上下文与 finishedWork/lanes。
+ * 2) 统计与重置：清空 root.finishedWork/finishedLanes，计算 remainingLanes 并标记 root 完成。
+ * 3) 若存在 Passive 副作用：尽早调度回调以处理（放入 Normal 优先级），并缓存 lanes/transitions。
+ * 4) 有效副作用路径：进入 CommitContext，按阶段执行：
+ *    - before-mutation：读取宿主树状态（如 getSnapshotBeforeUpdate）
+ *    - mutation：执行实际的宿主树变更（DOM 变更/Ref 解绑等），随后 resetAfterCommit
+ *    - 切换 current：root.current = finishedWork
+ *    - layout：读取变更后的宿主树；类生命周期/Effect Layout 等在此阶段
+ *    - requestPaint：让浏览器有机会进行一次绘制
+ * 5) 无副作用路径：直接切换 current 并记录提交时间（用于分析/火焰图）
+ * 6) 结束收尾：
+ *    - 标记并缓存 root 的被动副作用，用于稍后冲刷
+ *    - 释放缓存池/清理嵌套被动计数
+ *    - 处理 recoverable errors（记录到 onRecoverableError）
+ *    - 若存在离散渲染产生的被动副作用且非 LegacyRoot，则同步冲刷
+ *    - 计算剩余工作与嵌套更新计数，防止无限同步循环
+ *    - 冲刷同步回调（flushSyncCallbacks），并打点/结束提交
+ */
 function commitRootImpl(
   root: FiberRoot,
   recoverableErrors: null | Array<CapturedValue<mixed>>,
@@ -2199,12 +2236,9 @@ function commitRootImpl(
   renderPriorityLevel: EventPriority,
 ) {
   do {
-    // `flushPassiveEffects` will call `flushSyncUpdateQueue` at the end, which
-    // means `flushPassiveEffects` will sometimes result in additional
-    // passive effects. So we need to keep flushing in a loop until there are
-    // no more pending effects.
-    // TODO: Might be better if `flushPassiveEffects` did not automatically
-    // flush synchronous work at the end, to avoid factoring hazards like this.
+    // flushPassiveEffects 在末尾会调用 flushSyncUpdateQueue，可能引发新的被动副作用；
+    // 因此需要循环冲刷直到没有待处理的被动副作用为止。
+    // TODO：若 flushPassiveEffects 末尾不自动冲刷同步工作，可避免此处的相互影响。
     flushPassiveEffects();
   } while (rootWithPendingPassiveEffects !== null);
   flushRenderPhaseStrictModeWarningsInDEV();
@@ -2258,17 +2292,15 @@ function commitRootImpl(
     );
   }
 
-  // commitRoot never returns a continuation; it always finishes synchronously.
-  // So we can clear these now to allow a new callback to be scheduled.
+  // commitRoot 不会返回 continuation；总是同步完成。
+  // 因此可立即清理这些字段以便调度新的回调。
   root.callbackNode = null;
   root.callbackPriority = NoLane;
 
-  // Check which lanes no longer have any work scheduled on them, and mark
-  // those as finished.
+  // 计算不再有工作安排的 lanes，并将其标记为已完成。
   let remainingLanes = mergeLanes(finishedWork.lanes, finishedWork.childLanes);
 
-  // Make sure to account for lanes that were updated by a concurrent event
-  // during the render phase; don't mark them as finished.
+  // 需要把渲染阶段内并发事件更新过的 lanes 算进去；这些 lanes 不能被标记为完成。
   const concurrentlyUpdatedLanes = getConcurrentlyUpdatedLanes();
   remainingLanes = mergeLanes(remainingLanes, concurrentlyUpdatedLanes);
 
@@ -2285,11 +2317,8 @@ function commitRootImpl(
     // times out.
   }
 
-  // If there are pending passive effects, schedule a callback to process them.
-  // Do this as early as possible, so it is queued before anything else that
-  // might get scheduled in the commit phase. (See #16714.)
-  // TODO: Delete all other places that schedule the passive effect callback
-  // They're redundant.
+  // 若存在待处理的 Passive 副作用，尽早调度回调以处理（优先入队，参见 #16714）。
+  // TODO：删除其它重复调度被动副作用回调的地方，避免冗余。
   if (
     (finishedWork.subtreeFlags & PassiveMask) !== NoFlags ||
     (finishedWork.flags & PassiveMask) !== NoFlags
@@ -2297,28 +2326,20 @@ function commitRootImpl(
     if (!rootDoesHavePassiveEffects) {
       rootDoesHavePassiveEffects = true;
       pendingPassiveEffectsRemainingLanes = remainingLanes;
-      // workInProgressTransitions might be overwritten, so we want
-      // to store it in pendingPassiveTransitions until they get processed
-      // We need to pass this through as an argument to commitRoot
-      // because workInProgressTransitions might have changed between
-      // the previous render and commit if we throttle the commit
-      // with setTimeout
+      // workInProgressTransitions 可能被覆盖；暂存到 pendingPassiveTransitions，
+      // 以避免在 setTimeout 节流提交时，渲染与提交之间发生变化而丢失。
       pendingPassiveTransitions = transitions;
       scheduleCallback(NormalSchedulerPriority, () => {
         flushPassiveEffects();
-        // This render triggered passive effects: release the root cache pool
-        // *after* passive effects fire to avoid freeing a cache pool that may
-        // be referenced by a node in the tree (HostRoot, Cache boundary etc)
+        // 本次渲染触发了被动副作用：需在其执行之后再释放根级缓存池，
+        // 避免释放仍被树中节点（HostRoot、Cache 边界等）引用的缓存池。
         return null;
       });
     }
   }
 
-  // Check if there are any effects in the whole tree.
-  // TODO: This is left over from the effect list implementation, where we had
-  // to check for the existence of `firstEffect` to satisfy Flow. I think the
-  // only other reason this optimization exists is because it affects profiling.
-  // Reconsider whether this is necessary.
+  // 判断整棵树上是否存在任何副作用。
+  // TODO：历史遗留（早期 effect list 实现），主要影响分析/性能打点；可再次评估必要性。
   const subtreeHasEffects =
     (finishedWork.subtreeFlags &
       (BeforeMutationMask | MutationMask | LayoutMask | PassiveMask)) !==
@@ -2340,31 +2361,27 @@ function commitRootImpl(
     // Reset this to null before calling lifecycles
     ReactCurrentOwner.current = null;
 
-    // The commit phase is broken into several sub-phases. We do a separate pass
-    // of the effect list for each phase: all mutation effects come before all
-    // layout effects, and so on.
+    // 提交阶段被划分为多个子阶段：按阶段分多次遍历 effect 列表；
+    // 例如所有 mutation effects 先于所有 layout effects。
 
-    // The first phase a "before mutation" phase. We use this phase to read the
-    // state of the host tree right before we mutate it. This is where
-    // getSnapshotBeforeUpdate is called.
+    // 第一阶段：before-mutation。
+    // 在真实变更前读取宿主树的状态（如 getSnapshotBeforeUpdate 在此调用）。
     const shouldFireAfterActiveInstanceBlur = commitBeforeMutationEffects(
       root,
       finishedWork,
     );
 
     if (enableProfilerTimer) {
-      // Mark the current commit time to be shared by all Profilers in this
-      // batch. This enables them to be grouped later.
+      // 记录当前提交时间，供本批次所有 Profiler 共享，便于之后分组/分析。
       recordCommitTime();
     }
 
     if (enableProfilerTimer && enableProfilerNestedUpdateScheduledHook) {
-      // Track the root here, rather than in commitLayoutEffects(), because of ref setters.
-      // Updates scheduled during ref detachment should also be flagged.
+      // 在此跟踪 root（而非在 commitLayoutEffects 中），以覆盖 ref 解绑期间调度的更新。
       rootCommittingMutationOrLayoutEffects = root;
     }
 
-    // The next phase is the mutation phase, where we mutate the host tree.
+    // 第二阶段：mutation —— 实际变更宿主树。
     commitMutationEffects(root, finishedWork, lanes);
 
     if (enableCreateEventHandleAPI) {
@@ -2374,15 +2391,13 @@ function commitRootImpl(
     }
     resetAfterCommit(root.containerInfo);
 
-    // The work-in-progress tree is now the current tree. This must come after
-    // the mutation phase, so that the previous tree is still current during
-    // componentWillUnmount, but before the layout phase, so that the finished
-    // work is current during componentDidMount/Update.
+    // 将 WIP 树切换为 current 树。
+    // 必须在 mutation 之后，以便 componentWillUnmount 期间 previous 仍指向旧树；
+    // 也必须在 layout 之前，以便 componentDidMount/Update 期间 current 指向新树。
     root.current = finishedWork;
 
-    // The next phase is the layout phase, where we call effects that read
-    // the host tree after it's been mutated. The idiomatic use case for this is
-    // layout, but class component lifecycles also fire here for legacy reasons.
+    // 第三阶段：layout —— 在宿主树变更后读取状态；
+    // 典型用于布局读取；类组件生命周期也因历史原因在此触发。
     if (__DEV__) {
       if (enableDebugTracing) {
         logLayoutEffectsStarted(lanes);
@@ -2406,8 +2421,7 @@ function commitRootImpl(
       rootCommittingMutationOrLayoutEffects = null;
     }
 
-    // Tell Scheduler to yield at the end of the frame, so the browser has an
-    // opportunity to paint.
+    // 提示调度器在该帧末尾让出控制权，以便浏览器有机会进行绘制。
     requestPaint();
 
     executionContext = prevExecutionContext;
@@ -2416,11 +2430,10 @@ function commitRootImpl(
     setCurrentUpdatePriority(previousPriority);
     ReactCurrentBatchConfig.transition = prevTransition;
   } else {
-    // No effects.
+    // 无副作用路径。
     root.current = finishedWork;
-    // Measure these anyway so the flamegraph explicitly shows that there were
-    // no effects.
-    // TODO: Maybe there's a better way to report this.
+    // 仍然记录提交时间，便于火焰图明确显示“无副作用”。
+    // TODO：是否存在更好的报告方式？
     if (enableProfilerTimer) {
       recordCommitTime();
     }
@@ -2429,14 +2442,12 @@ function commitRootImpl(
   const rootDidHavePassiveEffects = rootDoesHavePassiveEffects;
 
   if (rootDoesHavePassiveEffects) {
-    // This commit has passive effects. Stash a reference to them. But don't
-    // schedule a callback until after flushing layout work.
+    // 本次提交包含被动副作用：缓存其引用，但要等布局工作冲刷后再调度回调。
     rootDoesHavePassiveEffects = false;
     rootWithPendingPassiveEffects = root;
     pendingPassiveEffectsLanes = lanes;
   } else {
-    // There were no passive effects, so we can immediately release the cache
-    // pool for this render.
+    // 无被动副作用：可立即释放本次渲染的缓存池。
     releaseRootPooledCache(root, remainingLanes);
     if (__DEV__) {
       nestedPassiveUpdateCount = 0;
@@ -2447,16 +2458,10 @@ function commitRootImpl(
   // Read this again, since an effect might have updated it
   remainingLanes = root.pendingLanes;
 
-  // Check if there's remaining work on this root
-  // TODO: This is part of the `componentDidCatch` implementation. Its purpose
-  // is to detect whether something might have called setState inside
-  // `componentDidCatch`. The mechanism is known to be flawed because `setState`
-  // inside `componentDidCatch` is itself flawed — that's why we recommend
-  // `getDerivedStateFromError` instead. However, it could be improved by
-  // checking if remainingLanes includes Sync work, instead of whether there's
-  // any work remaining at all (which would also include stuff like Suspense
-  // retries or transitions). It's been like this for a while, though, so fixing
-  // it probably isn't that urgent.
+  // 检查 root 上是否仍有剩余工作。
+  // TODO：属于 componentDidCatch 的实现部分，用于探测是否在其内部调用了 setState。
+  // 该机制并不完美（componentDidCatch 内调用 setState 本身就不理想），
+  // 可改为判断是否包含 Sync 车道，而非“是否有任意剩余工作”（包括 Suspense 重试或 transitions）。
   if (remainingLanes === NoLanes) {
     // If there's no remaining work, we can clear the set of already failed
     // error boundaries.
